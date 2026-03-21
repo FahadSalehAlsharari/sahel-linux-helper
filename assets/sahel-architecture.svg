@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="620" viewBox="0 0 800 620">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #FAFBFC; }
+      .card { fill: #FFFFFF; stroke: #E1E4E8; }
+      .card-core { fill: #EFF6FF; stroke: #93C5FD; }
+      .card-pkg { fill: #F0FDF4; stroke: #86EFAC; }
+      .card-ui { fill: #FFF7ED; stroke: #FDBA74; }
+      .card-safe { fill: #FEF2F2; stroke: #FCA5A5; }
+      .title-core { fill: #1E40AF; }
+      .title-pkg { fill: #166534; }
+      .title-ui { fill: #9A3412; }
+      .title-safe { fill: #991B1B; }
+      .desc { fill: #6B7280; }
+      .section-num { fill: #9CA3AF; }
+      .header-text { fill: #111827; }
+      .header-sub { fill: #6B7280; }
+      .group-label { fill: #374151; }
+      .group-line { stroke: #D1D5DB; }
+      .connector { stroke: #CBD5E1; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0D1117; }
+      .card { fill: #161B22; stroke: #30363D; }
+      .card-core { fill: #0D1B2A; stroke: #1E3A5F; }
+      .card-pkg { fill: #0D1F12; stroke: #1A4027; }
+      .card-ui { fill: #1F1206; stroke: #3D2A10; }
+      .card-safe { fill: #1F0D0D; stroke: #3D1A1A; }
+      .title-core { fill: #7AA2F7; }
+      .title-pkg { fill: #9ECE6A; }
+      .title-ui { fill: #E0AF68; }
+      .title-safe { fill: #F7768E; }
+      .desc { fill: #8B949E; }
+      .section-num { fill: #484F58; }
+      .header-text { fill: #F0F6FC; }
+      .header-sub { fill: #8B949E; }
+      .group-label { fill: #C9D1D9; }
+      .group-line { stroke: #30363D; }
+      .connector { stroke: #30363D; }
+    }
+  </style>
+
+  <rect class="bg" width="800" height="620" rx="0"/>
+
+  <text class="header-text" x="400" y="36" text-anchor="middle" font-family="'SF Pro Display', system-ui, sans-serif" font-size="20" font-weight="700">sahel v1.0.0 -- البنية الداخلية</text>
+  <text class="header-sub" x="400" y="56" text-anchor="middle" font-family="'SF Pro Display', system-ui, sans-serif" font-size="13">12 وحدة معزولة داخل ملف واحد</text>
+
+  <text class="group-label" x="40" y="100" font-family="'SF Pro Display', system-ui, sans-serif" font-size="12" font-weight="600" letter-spacing="1">FOUNDATION</text>
+  <line class="group-line" x1="140" y1="96" x2="760" y2="96" stroke-width="0.5"/>
+
+  <g>
+    <rect class="card-core" x="40" y="114" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="52" y="132" font-family="monospace" font-size="10" font-weight="600">01</text>
+    <text class="title-core" x="52" y="150" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">config</text>
+    <text class="desc" x="52" y="168" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">الثوابت والاعدادات</text>
+  </g>
+
+  <g>
+    <rect class="card-ui" x="220" y="114" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="232" y="132" font-family="monospace" font-size="10" font-weight="600">02</text>
+    <text class="title-ui" x="232" y="150" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">ui</text>
+    <text class="desc" x="232" y="168" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">الالوان والرموز والطباعة</text>
+  </g>
+
+  <g>
+    <rect class="card-core" x="400" y="114" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="412" y="132" font-family="monospace" font-size="10" font-weight="600">03</text>
+    <text class="title-core" x="412" y="150" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">logging</text>
+    <text class="desc" x="412" y="168" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">نظام التسجيل</text>
+  </g>
+
+  <g>
+    <rect class="card-safe" x="580" y="114" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="592" y="132" font-family="monospace" font-size="10" font-weight="600">04</text>
+    <text class="title-safe" x="592" y="150" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">safety</text>
+    <text class="desc" x="592" y="168" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">فحوصات الامان والحماية</text>
+  </g>
+
+  <g>
+    <rect class="card-safe" x="40" y="206" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="52" y="224" font-family="monospace" font-size="10" font-weight="600">05</text>
+    <text class="title-safe" x="52" y="242" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">trap</text>
+    <text class="desc" x="52" y="260" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">معالجة الاشارات والخروج</text>
+  </g>
+
+  <text class="group-label" x="40" y="322" font-family="'SF Pro Display', system-ui, sans-serif" font-size="12" font-weight="600" letter-spacing="1">PACKAGE MANAGERS</text>
+  <line class="group-line" x1="200" y1="318" x2="760" y2="318" stroke-width="0.5"/>
+
+  <g>
+    <rect class="card-pkg" x="40" y="336" width="228" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="52" y="354" font-family="monospace" font-size="10" font-weight="600">06</text>
+    <text class="title-pkg" x="52" y="372" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">apt</text>
+    <text class="desc" x="52" y="390" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">13 دالة -- تحديث، تثبيت، حذف، بحث</text>
+  </g>
+
+  <g>
+    <rect class="card-pkg" x="280" y="336" width="228" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="292" y="354" font-family="monospace" font-size="10" font-weight="600">07</text>
+    <text class="title-pkg" x="292" y="372" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">snap</text>
+    <text class="desc" x="292" y="390" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">7 دوال -- تحديث، عرض، حذف</text>
+  </g>
+
+  <g>
+    <rect class="card-pkg" x="520" y="336" width="228" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="532" y="354" font-family="monospace" font-size="10" font-weight="600">08</text>
+    <text class="title-pkg" x="532" y="372" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">flatpak</text>
+    <text class="desc" x="532" y="390" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">5 دوال -- تحديث، عرض، حذف</text>
+  </g>
+
+  <text class="group-label" x="40" y="452" font-family="'SF Pro Display', system-ui, sans-serif" font-size="12" font-weight="600" letter-spacing="1">INTERACTIVE MODULES</text>
+  <line class="group-line" x1="220" y1="448" x2="760" y2="448" stroke-width="0.5"/>
+
+  <g>
+    <rect class="card-ui" x="40" y="466" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="52" y="484" font-family="monospace" font-size="10" font-weight="600">09</text>
+    <text class="title-ui" x="52" y="502" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">system_info</text>
+    <text class="desc" x="52" y="520" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">معلومات النظام</text>
+  </g>
+
+  <g>
+    <rect class="card-ui" x="220" y="466" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="232" y="484" font-family="monospace" font-size="10" font-weight="600">10</text>
+    <text class="title-ui" x="232" y="502" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">package_mgmt</text>
+    <text class="desc" x="232" y="520" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">الوحدات التفاعلية</text>
+  </g>
+
+  <g>
+    <rect class="card-core" x="400" y="466" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="412" y="484" font-family="monospace" font-size="10" font-weight="600">11</text>
+    <text class="title-core" x="412" y="502" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">cli_args</text>
+    <text class="desc" x="412" y="520" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">اوامر سطر الاوامر</text>
+  </g>
+
+  <g>
+    <rect class="card-ui" x="580" y="466" width="168" height="80" rx="8" stroke-width="1"/>
+    <text class="section-num" x="592" y="484" font-family="monospace" font-size="10" font-weight="600">12</text>
+    <text class="title-ui" x="592" y="502" font-family="'SF Pro Display', system-ui, sans-serif" font-size="14" font-weight="600">main_menu</text>
+    <text class="desc" x="592" y="520" font-family="'SF Pro Display', system-ui, sans-serif" font-size="11">القائمة الرئيسية</text>
+  </g>
+
+  <text class="header-sub" x="400" y="596" text-anchor="middle" font-family="'SF Pro Display', system-ui, sans-serif" font-size="12">FahadAlsharari -- FahadAlsharari.sa</text>
+</svg>

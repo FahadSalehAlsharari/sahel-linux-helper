@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="340" viewBox="0 0 800 340">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #FAFBFC; }
+      .fcard { fill: #FFFFFF; stroke: #E1E4E8; }
+      .fcard:hover { stroke: #93C5FD; }
+      .icon-circle-1 { fill: #DBEAFE; }
+      .icon-circle-2 { fill: #D1FAE5; }
+      .icon-circle-3 { fill: #FEF3C7; }
+      .icon-circle-4 { fill: #FCE7F3; }
+      .icon-circle-5 { fill: #E0E7FF; }
+      .icon-sym-1 { fill: #2563EB; }
+      .icon-sym-2 { fill: #059669; }
+      .icon-sym-3 { fill: #D97706; }
+      .icon-sym-4 { fill: #DB2777; }
+      .icon-sym-5 { fill: #4F46E5; }
+      .ftitle { fill: #1F2937; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .fdesc { fill: #6B7280; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .fheader { fill: #111827; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .fheader-sub { fill: #6B7280; font-family: 'SF Pro Display', system-ui, sans-serif; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0D1117; }
+      .fcard { fill: #161B22; stroke: #30363D; }
+      .icon-circle-1 { fill: #172554; }
+      .icon-circle-2 { fill: #052E16; }
+      .icon-circle-3 { fill: #422006; }
+      .icon-circle-4 { fill: #500724; }
+      .icon-circle-5 { fill: #1E1B4B; }
+      .icon-sym-1 { fill: #60A5FA; }
+      .icon-sym-2 { fill: #34D399; }
+      .icon-sym-3 { fill: #FBBF24; }
+      .icon-sym-4 { fill: #F472B6; }
+      .icon-sym-5 { fill: #818CF8; }
+      .ftitle { fill: #F0F6FC; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .fdesc { fill: #8B949E; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .fheader { fill: #F0F6FC; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .fheader-sub { fill: #8B949E; font-family: 'SF Pro Display', system-ui, sans-serif; }
+    }
+  </style>
+
+  <rect class="bg" width="800" height="340" rx="0"/>
+
+  <text class="fheader" x="400" y="36" text-anchor="middle" font-size="18" font-weight="700">الميزات الرئيسية</text>
+  <text class="fheader-sub" x="400" y="56" text-anchor="middle" font-size="12">كل ما تحتاجه لادارة نظامك من مكان واحد</text>
+
+  <g transform="translate(28, 80)">
+    <rect class="fcard" x="0" y="0" width="140" height="160" rx="10" stroke-width="1"/>
+    <circle class="icon-circle-1" cx="70" cy="40" r="22"/>
+    <text class="icon-sym-1" x="70" y="46" text-anchor="middle" font-family="monospace" font-size="18" font-weight="700">^</text>
+    <text class="ftitle" x="70" y="86" text-anchor="middle" font-size="13" font-weight="600">تحديث شامل</text>
+    <text class="fdesc" x="70" y="106" text-anchor="middle" font-size="10">apt + snap</text>
+    <text class="fdesc" x="70" y="120" text-anchor="middle" font-size="10">+ flatpak</text>
+    <text class="fdesc" x="70" y="140" text-anchor="middle" font-size="10">بأمر واحد</text>
+  </g>
+
+  <g transform="translate(180, 80)">
+    <rect class="fcard" x="0" y="0" width="140" height="160" rx="10" stroke-width="1"/>
+    <circle class="icon-circle-2" cx="70" cy="40" r="22"/>
+    <text class="icon-sym-2" x="70" y="46" text-anchor="middle" font-family="monospace" font-size="18" font-weight="700">~</text>
+    <text class="ftitle" x="70" y="86" text-anchor="middle" font-size="13" font-weight="600">تنظيف ذكي</text>
+    <text class="fdesc" x="70" y="106" text-anchor="middle" font-size="10">كاش، يتيمة</text>
+    <text class="fdesc" x="70" y="120" text-anchor="middle" font-size="10">سجلات، مؤقتة</text>
+    <text class="fdesc" x="70" y="140" text-anchor="middle" font-size="10">snap قديمة</text>
+  </g>
+
+  <g transform="translate(332, 80)">
+    <rect class="fcard" x="0" y="0" width="140" height="160" rx="10" stroke-width="1"/>
+    <circle class="icon-circle-3" cx="70" cy="40" r="22"/>
+    <text class="icon-sym-3" x="70" y="46" text-anchor="middle" font-family="monospace" font-size="18" font-weight="700">#</text>
+    <text class="ftitle" x="70" y="86" text-anchor="middle" font-size="13" font-weight="600">ادارة حزم</text>
+    <text class="fdesc" x="70" y="106" text-anchor="middle" font-size="10">عرض، بحث</text>
+    <text class="fdesc" x="70" y="120" text-anchor="middle" font-size="10">تثبيت، حذف</text>
+    <text class="fdesc" x="70" y="140" text-anchor="middle" font-size="10">حماية النظام</text>
+  </g>
+
+  <g transform="translate(484, 80)">
+    <rect class="fcard" x="0" y="0" width="140" height="160" rx="10" stroke-width="1"/>
+    <circle class="icon-circle-4" cx="70" cy="40" r="22"/>
+    <text class="icon-sym-4" x="70" y="46" text-anchor="middle" font-family="monospace" font-size="18" font-weight="700">!</text>
+    <text class="ftitle" x="70" y="86" text-anchor="middle" font-size="13" font-weight="600">حماية متقدمة</text>
+    <text class="fdesc" x="70" y="106" text-anchor="middle" font-size="10">حزم محمية</text>
+    <text class="fdesc" x="70" y="120" text-anchor="middle" font-size="10">تأكيد مزدوج</text>
+    <text class="fdesc" x="70" y="140" text-anchor="middle" font-size="10">dry-run</text>
+  </g>
+
+  <g transform="translate(636, 80)">
+    <rect class="fcard" x="0" y="0" width="140" height="160" rx="10" stroke-width="1"/>
+    <circle class="icon-circle-5" cx="70" cy="40" r="22"/>
+    <text class="icon-sym-5" x="70" y="46" text-anchor="middle" font-family="monospace" font-size="18" font-weight="700">i</text>
+    <text class="ftitle" x="70" y="86" text-anchor="middle" font-size="13" font-weight="600">معلومات النظام</text>
+    <text class="fdesc" x="70" y="106" text-anchor="middle" font-size="10">CPU, RAM</text>
+    <text class="fdesc" x="70" y="120" text-anchor="middle" font-size="10">اقراص، شبكة</text>
+    <text class="fdesc" x="70" y="140" text-anchor="middle" font-size="10">مدراء الحزم</text>
+  </g>
+
+  <text class="fheader-sub" x="400" y="290" text-anchor="middle" font-size="11">واجهة عربية كاملة | ASCII-safe | متوافق مع جميع الطرفيات | بدون اعتمادات خارجية</text>
+
+  <text class="fheader-sub" x="400" y="318" text-anchor="middle" font-size="11" opacity="0.6">FahadAlsharari -- FahadAlsharari.sa</text>
+</svg>

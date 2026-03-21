@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="380" viewBox="0 0 800 380">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #FAFBFC; }
+      .card { fill: #FFFFFF; stroke: #E1E4E8; }
+      .cmd { fill: #1F2937; font-family: 'SF Mono', 'Fira Code', monospace; }
+      .desc-ar { fill: #4B5563; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .header { fill: #111827; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .badge { fill: #DBEAFE; stroke: #93C5FD; }
+      .badge-text { fill: #1E40AF; font-family: 'SF Mono', monospace; }
+      .prompt { fill: #059669; font-family: 'SF Mono', monospace; }
+      .divider { stroke: #E5E7EB; }
+      .note { fill: #9CA3AF; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .icon-bg { fill: #F3F4F6; }
+      .arrow { fill: #9CA3AF; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0D1117; }
+      .card { fill: #161B22; stroke: #30363D; }
+      .cmd { fill: #F0F6FC; font-family: 'SF Mono', 'Fira Code', monospace; }
+      .desc-ar { fill: #8B949E; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .header { fill: #F0F6FC; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .badge { fill: #0D1B2A; stroke: #1E3A5F; }
+      .badge-text { fill: #7AA2F7; font-family: 'SF Mono', monospace; }
+      .prompt { fill: #9ECE6A; font-family: 'SF Mono', monospace; }
+      .divider { stroke: #21262D; }
+      .note { fill: #484F58; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .icon-bg { fill: #21262D; }
+      .arrow { fill: #484F58; }
+    }
+  </style>
+
+  <rect class="bg" width="800" height="380" rx="0"/>
+
+  <text class="header" x="400" y="36" text-anchor="middle" font-size="18" font-weight="700">اوامر سطر الاوامر السريعة</text>
+  <text class="note" x="400" y="56" text-anchor="middle" font-size="12">Quick CLI Commands Reference</text>
+
+  <g transform="translate(40, 80)">
+    <rect class="card" x="0" y="0" width="340" height="60" rx="8" stroke-width="1"/>
+    <text class="prompt" x="20" y="26" font-size="13">$</text>
+    <text class="cmd" x="36" y="26" font-size="14" font-weight="600">sahel</text>
+    <text class="desc-ar" x="20" y="46" font-size="12">تشغيل الواجهة التفاعلية</text>
+  </g>
+
+  <g transform="translate(400, 80)">
+    <rect class="card" x="0" y="0" width="340" height="60" rx="8" stroke-width="1"/>
+    <text class="prompt" x="20" y="26" font-size="13">$</text>
+    <text class="cmd" x="36" y="26" font-size="14" font-weight="600">sahel --help</text>
+    <text class="desc-ar" x="20" y="46" font-size="12">عرض المساعدة والخيارات</text>
+  </g>
+
+  <g transform="translate(40, 155)">
+    <rect class="card" x="0" y="0" width="340" height="60" rx="8" stroke-width="1"/>
+    <text class="prompt" x="20" y="26" font-size="13">$</text>
+    <text class="cmd" x="36" y="26" font-size="14" font-weight="600">sahel --update</text>
+    <text class="desc-ar" x="20" y="46" font-size="12">تحديث النظام الشامل (apt + snap + flatpak)</text>
+  </g>
+
+  <g transform="translate(400, 155)">
+    <rect class="card" x="0" y="0" width="340" height="60" rx="8" stroke-width="1"/>
+    <text class="prompt" x="20" y="26" font-size="13">$</text>
+    <text class="cmd" x="36" y="26" font-size="14" font-weight="600">sahel --clean</text>
+    <text class="desc-ar" x="20" y="46" font-size="12">تنظيف الحزم والملفات المؤقتة</text>
+  </g>
+
+  <g transform="translate(40, 230)">
+    <rect class="card" x="0" y="0" width="340" height="60" rx="8" stroke-width="1"/>
+    <text class="prompt" x="20" y="26" font-size="13">$</text>
+    <text class="cmd" x="36" y="26" font-size="14" font-weight="600">sahel --info</text>
+    <text class="desc-ar" x="20" y="46" font-size="12">عرض معلومات النظام التفصيلية</text>
+  </g>
+
+  <g transform="translate(400, 230)">
+    <rect class="card" x="0" y="0" width="340" height="60" rx="8" stroke-width="1"/>
+    <text class="prompt" x="20" y="26" font-size="13">$</text>
+    <text class="cmd" x="36" y="26" font-size="14" font-weight="600">sahel --version</text>
+    <text class="desc-ar" x="20" y="46" font-size="12">عرض رقم الاصدار الحالي</text>
+  </g>
+
+  <line class="divider" x1="40" y1="316" x2="760" y2="316" stroke-width="0.5"/>
+
+  <text class="note" x="400" y="340" text-anchor="middle" font-size="12">متغير البيئة الاختياري:</text>
+
+  <rect class="badge" x="240" y="350" width="320" height="26" rx="6" stroke-width="1"/>
+  <text class="badge-text" x="400" y="368" text-anchor="middle" font-size="12" font-weight="600">SAHEL_FANCY=1 sahel    # رموز Unicode</text>
+</svg>

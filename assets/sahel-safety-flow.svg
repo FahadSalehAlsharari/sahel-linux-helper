@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #FAFBFC; }
+      .step-card { fill: #FFFFFF; stroke: #E1E4E8; }
+      .step-pass { fill: #F0FDF4; stroke: #86EFAC; }
+      .step-block { fill: #FEF2F2; stroke: #FCA5A5; }
+      .step-warn { fill: #FFFBEB; stroke: #FCD34D; }
+      .step-num-bg { fill: #1F2937; }
+      .step-num { fill: #FFFFFF; }
+      .step-title { fill: #1F2937; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .step-desc { fill: #6B7280; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .flow-arrow { stroke: #9CA3AF; fill: none; }
+      .flow-arrow-head { fill: #9CA3AF; }
+      .block-label { fill: #DC2626; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .pass-label { fill: #059669; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .header { fill: #111827; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .header-sub { fill: #6B7280; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .divider { stroke: #E5E7EB; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0D1117; }
+      .step-card { fill: #161B22; stroke: #30363D; }
+      .step-pass { fill: #0D1F12; stroke: #1A4027; }
+      .step-block { fill: #1F0D0D; stroke: #3D1A1A; }
+      .step-warn { fill: #1F1A06; stroke: #3D3010; }
+      .step-num-bg { fill: #F0F6FC; }
+      .step-num { fill: #0D1117; }
+      .step-title { fill: #F0F6FC; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .step-desc { fill: #8B949E; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .flow-arrow { stroke: #484F58; fill: none; }
+      .flow-arrow-head { fill: #484F58; }
+      .block-label { fill: #F7768E; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .pass-label { fill: #9ECE6A; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .header { fill: #F0F6FC; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .header-sub { fill: #8B949E; font-family: 'SF Pro Display', system-ui, sans-serif; }
+      .divider { stroke: #21262D; }
+    }
+  </style>
+
+  <rect class="bg" width="800" height="500" rx="0"/>
+
+  <text class="header" x="400" y="36" text-anchor="middle" font-size="18" font-weight="700">طبقات الامان عند حذف الحزم</text>
+  <text class="header-sub" x="400" y="56" text-anchor="middle" font-size="12">Safety layers -- package removal flow</text>
+
+  <g transform="translate(80, 80)">
+    <rect class="step-block" x="0" y="0" width="260" height="70" rx="8" stroke-width="1.5"/>
+    <circle class="step-num-bg" cx="24" cy="22" r="12"/>
+    <text class="step-num" x="24" y="27" text-anchor="middle" font-family="monospace" font-size="12" font-weight="700">1</text>
+    <text class="step-title" x="48" y="26" font-size="14" font-weight="600">فحص الحزم المحمية</text>
+    <text class="step-desc" x="48" y="48" font-size="11">30+ حزمة اساسية محظور حذفها</text>
+    <text class="block-label" x="220" y="64" font-size="10" font-weight="600" text-anchor="end">رفض فوري</text>
+  </g>
+
+  <line class="flow-arrow" x1="210" y1="150" x2="210" y2="170" stroke-width="1.5"/>
+  <polygon class="flow-arrow-head" points="210,178 205,170 215,170"/>
+
+  <g transform="translate(80, 180)">
+    <rect class="step-card" x="0" y="0" width="260" height="70" rx="8" stroke-width="1"/>
+    <circle class="step-num-bg" cx="24" cy="22" r="12"/>
+    <text class="step-num" x="24" y="27" text-anchor="middle" font-family="monospace" font-size="12" font-weight="700">2</text>
+    <text class="step-title" x="48" y="26" font-size="14" font-weight="600">كشف مصدر التثبيت</text>
+    <text class="step-desc" x="48" y="48" font-size="11">apt / snap / flatpak -- اين مثبتة؟</text>
+  </g>
+
+  <line class="flow-arrow" x1="210" y1="250" x2="210" y2="270" stroke-width="1.5"/>
+  <polygon class="flow-arrow-head" points="210,278 205,270 215,270"/>
+
+  <g transform="translate(80, 280)">
+    <rect class="step-block" x="0" y="0" width="260" height="70" rx="8" stroke-width="1.5"/>
+    <circle class="step-num-bg" cx="24" cy="22" r="12"/>
+    <text class="step-num" x="24" y="27" text-anchor="middle" font-family="monospace" font-size="12" font-weight="700">3</text>
+    <text class="step-title" x="48" y="26" font-size="14" font-weight="600">dry-run تحليل التأثير</text>
+    <text class="step-desc" x="48" y="48" font-size="11">فحص التبعيات المتأثرة بالحذف</text>
+    <text class="block-label" x="220" y="64" font-size="10" font-weight="600" text-anchor="end">رفض لو مس محمية</text>
+  </g>
+
+  <line class="flow-arrow" x1="210" y1="350" x2="210" y2="370" stroke-width="1.5"/>
+  <polygon class="flow-arrow-head" points="210,378 205,370 215,370"/>
+
+  <g transform="translate(80, 380)">
+    <rect class="step-warn" x="0" y="0" width="260" height="70" rx="8" stroke-width="1.5"/>
+    <circle class="step-num-bg" cx="24" cy="22" r="12"/>
+    <text class="step-num" x="24" y="27" text-anchor="middle" font-family="monospace" font-size="12" font-weight="700">4</text>
+    <text class="step-title" x="48" y="26" font-size="14" font-weight="600">تأكيد مزدوج</text>
+    <text class="step-desc" x="48" y="48" font-size="11">المستخدم يكتب "نعم" بالضبط</text>
+  </g>
+
+  <g transform="translate(440, 110)">
+    <rect class="step-pass" x="0" y="0" width="280" height="100" rx="10" stroke-width="1.5"/>
+    <text class="pass-label" x="140" y="30" text-anchor="middle" font-size="14" font-weight="700">التنفيذ الآمن</text>
+    <text class="step-desc" x="140" y="52" text-anchor="middle" font-size="11">فقط بعد اجتياز كل الطبقات</text>
+    <text class="step-desc" x="140" y="72" text-anchor="middle" font-size="11">كل عملية مسجلة في</text>
+    <text class="step-title" x="140" y="90" text-anchor="middle" font-family="monospace" font-size="11">/var/log/sahel/sahel.log</text>
+  </g>
+
+  <line class="flow-arrow" x1="340" y1="415" x2="438" y2="200" stroke-width="1.5"/>
+  <polygon class="flow-arrow-head" points="440,192 433,198 439,204"/>
+
+  <g transform="translate(440, 250)">
+    <rect class="step-card" x="0" y="0" width="280" height="200" rx="10" stroke-width="1"/>
+    <text class="step-title" x="20" y="28" font-size="13" font-weight="600">الحزم المحمية تشمل:</text>
+
+    <text class="step-desc" x="20" y="54" font-size="11">bash, coreutils, dpkg, apt, systemd</text>
+    <text class="step-desc" x="20" y="74" font-size="11">linux-generic, grub-common, sudo</text>
+    <text class="step-desc" x="20" y="94" font-size="11">libc6, network-manager, dbus, udev</text>
+    <text class="step-desc" x="20" y="114" font-size="11">passwd, login, mount, util-linux</text>
+    <text class="step-desc" x="20" y="134" font-size="11">gnupg, kmod, adduser, libgcc-s1</text>
+
+    <line class="divider" x1="20" y1="150" x2="260" y2="150" stroke-width="0.5"/>
+    <text class="step-desc" x="20" y="172" font-size="11" font-style="italic">اكثر من 30 حزمة محمية</text>
+    <text class="step-desc" x="20" y="190" font-size="11" font-style="italic">قابلة للتوسيع في الاصدارات القادمة</text>
+  </g>
+
+  <text class="header-sub" x="400" y="490" text-anchor="middle" font-size="11" opacity="0.6">FahadAlsharari -- FahadAlsharari.sa</text>
+</svg>
