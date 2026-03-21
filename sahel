@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  sahel v1.0.0 | مدير النظام للينكس
+#  sahel v2.0.0 | مدير النظام للينكس
 #  Linux System Manager with Arabic Interface
 #
 #  Author  : FahadAlsharari
 #  Website : FahadAlsharari.sa
-#  Version : 1.0.0
+#  Version : 2.0.0
 #  Date    : 2026-03-21
 #  License : MIT
 #
@@ -25,24 +25,36 @@
 #  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 # ============================================================================
 
+set -euo pipefail
+
 # ----------------------------------------------------------------------------
 #  SECTION 01: config
 #  الاعدادات العامة والثوابت
 # ----------------------------------------------------------------------------
 
-SAHEL_VERSION="2.0.0"
-SAHEL_NAME="sahel"
-SAHEL_NAME_AR="سهل"
-SAHEL_AUTHOR="FahadAlsharari"
-SAHEL_SITE="FahadAlsharari.sa"
-SAHEL_LOG_DIR="/var/log/sahel"
-SAHEL_LOG_FILE="${SAHEL_LOG_DIR}/sahel.log"
+readonly SAHEL_VERSION="2.0.0"
+readonly SAHEL_NAME="sahel"
+readonly SAHEL_NAME_AR="سهل"
+readonly SAHEL_AUTHOR="FahadAlsharari"
+readonly SAHEL_SITE="FahadAlsharari.sa"
+readonly SAHEL_REPO="https://github.com/FahadAlsharari/sahel"
+readonly SAHEL_LOG_DIR="/var/log/sahel"
+readonly SAHEL_LOG_FILE="${SAHEL_LOG_DIR}/sahel.log"
+readonly SAHEL_CONF_DIR="/etc/sahel"
+readonly SAHEL_POPULAR_CONF="${SAHEL_CONF_DIR}/popular.conf"
 
 # وضع الرموز: ascii (افتراضي آمن) او fancy (يحتاج دعم Unicode)
 SAHEL_ICON_MODE="ascii"
 
+# وضع المحاكاة: لو 1 ما ينفذ شي فعلي (--dry-run)
+SAHEL_DRY_RUN=0
+
+# متغيرات os-release -- تُملأ مرة واحدة عند التهيئة
+_OS_ID=""
+_OS_PRETTY=""
+
 # الحزم المحمية من الحذف - حذف اي وحدة منها يدمر النظام
-PROTECTED_PACKAGES=(
+readonly PROTECTED_PACKAGES=(
     "ubuntu-minimal" "ubuntu-standard" "ubuntu-desktop"
     "ubuntu-desktop-minimal" "base-files" "bash" "coreutils"
     "dpkg" "apt" "systemd" "init" "linux-base" "linux-generic"
@@ -91,21 +103,24 @@ _ui_detect_icon_mode() {
 
 # --- الرموز حسب الوضع ---
 _icon() {
-    local name="$1"
+    local name="${1:-default}"
     if [[ "$SAHEL_ICON_MODE" == "fancy" ]]; then
         case "$name" in
             ok)    printf "\xe2\x9c\x93" ;;
             fail)  printf "\xe2\x9c\x97" ;;
-            warn)  printf "!" ;;
-            *)     printf "*" ;;
+            warn)  printf "!"  ;;
+            info)  printf "i"  ;;
+            dry)   printf "~"  ;;
+            *)     printf "*"  ;;
         esac
     else
         case "$name" in
-            ok)    printf "[OK]" ;;
-            fail)  printf "[X]"  ;;
-            warn)  printf "[!]"  ;;
-            info)  printf "[i]"  ;;
-            *)     printf "[-]"  ;;
+            ok)    printf "[OK]"  ;;
+            fail)  printf "[X]"   ;;
+            warn)  printf "[!]"   ;;
+            info)  printf "[i]"   ;;
+            dry)   printf "[DRY]" ;;
+            *)     printf "[-]"   ;;
         esac
     fi
 }
@@ -147,6 +162,10 @@ _info() {
     echo -e "  ${C_CYAN}$(_icon info)${C_RESET} $1"
 }
 
+_dry() {
+    echo -e "  ${C_YELLOW}$(_icon dry)${C_RESET} ${C_DIM}(محاكاة)${C_RESET} $1"
+}
+
 # --- عنوان قسم ---
 _section() {
     echo ""
@@ -161,6 +180,9 @@ _header() {
     _line '='
     echo -e "  ${C_BOLD}${C_WHITE}${SAHEL_NAME_AR} (${SAHEL_NAME}) v${SAHEL_VERSION}${C_RESET}"
     echo -e "  ${C_DIM}${SAHEL_AUTHOR} -- ${SAHEL_SITE}${C_RESET}"
+    if (( SAHEL_DRY_RUN )); then
+        echo -e "  ${C_YELLOW}${C_BOLD}-- وضع المحاكاة (dry-run) -- لا يتم تنفيذ اي تغيير فعلي --${C_RESET}"
+    fi
     _line '='
 }
 
@@ -211,6 +233,11 @@ _human_size() {
     fi
 }
 
+# --- تحقق من ان المدخل رقم صحيح ---
+_is_int() {
+    [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
 # ----------------------------------------------------------------------------
 #  SECTION 03: logging
 #  نظام التسجيل
@@ -228,6 +255,11 @@ _log_init() {
     if [[ ! -w "$SAHEL_LOG_DIR" ]]; then
         sudo chown "$(id -u):$(id -g)" "$SAHEL_LOG_DIR" 2>/dev/null || true
     fi
+    # ضبط صلاحيات ملف السجل -- 640 فقط المالك يقرأ ويكتب والمجموعة تقرأ
+    if [[ ! -f "$SAHEL_LOG_FILE" ]]; then
+        touch "$SAHEL_LOG_FILE" 2>/dev/null || true
+        chmod 640 "$SAHEL_LOG_FILE" 2>/dev/null || true
+    fi
 }
 
 _log() {
@@ -237,27 +269,50 @@ _log() {
     printf '[%s] [%-5s] %s\n' "$ts" "$level" "$message" >> "$SAHEL_LOG_FILE" 2>/dev/null || true
 }
 
+# --- تدوير السجلات اذا تجاوز 10MB ---
+_log_rotate() {
+    if [[ -f "$SAHEL_LOG_FILE" ]]; then
+        local sz
+        sz=$(stat -c%s "$SAHEL_LOG_FILE" 2>/dev/null || echo 0)
+        if (( sz > 10485760 )); then
+            mv "$SAHEL_LOG_FILE" "${SAHEL_LOG_FILE}.1" 2>/dev/null || true
+            gzip -f "${SAHEL_LOG_FILE}.1" 2>/dev/null || true
+            touch "$SAHEL_LOG_FILE" 2>/dev/null || true
+            chmod 640 "$SAHEL_LOG_FILE" 2>/dev/null || true
+            _log "INFO" "تم تدوير ملف السجل"
+        fi
+    fi
+}
+
 # ----------------------------------------------------------------------------
 #  SECTION 04: safety
 #  فحوصات الامان وحماية النظام
 # ----------------------------------------------------------------------------
 
+# تحميل معلومات التوزيعة مرة واحدة فقط
+_safety_load_os_release() {
+    if [[ -f /etc/os-release ]]; then
+        # استخراج آمن بدون source كامل
+        _OS_ID=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"' || echo "unknown")
+        _OS_PRETTY=$(grep '^PRETTY_NAME=' /etc/os-release | cut -d= -f2- | tr -d '"' || echo "غير معروف")
+    else
+        _OS_ID="unknown"
+        _OS_PRETTY="غير معروف"
+    fi
+}
+
 # فحص التوزيعة
 _safety_check_distro() {
-    if [[ ! -f /etc/os-release ]]; then
-        _err "ملف /etc/os-release غير موجود -- تعذر التعرف على التوزيعة"
-        exit 1
+    if [[ -z "$_OS_ID" ]]; then
+        _safety_load_os_release
     fi
-    # shellcheck source=/dev/null
-    source /etc/os-release
-    local did="${ID:-unknown}"
 
-    case "$did" in
+    case "$_OS_ID" in
         ubuntu|debian|linuxmint|pop|zorin|elementary|neon)
-            _log "INFO" "التوزيعة: ${PRETTY_NAME:-$did}"
+            _log "INFO" "التوزيعة: ${_OS_PRETTY}"
             ;;
         *)
-            _warn "التوزيعة (${PRETTY_NAME:-$did}) غير مختبرة بالكامل"
+            _warn "التوزيعة (${_OS_PRETTY}) غير مختبرة بالكامل"
             _info "الاداة مصممة لتوزيعات Debian/Ubuntu"
             if ! _confirm "تريد الاستمرار؟"; then
                 exit 0
@@ -281,7 +336,12 @@ _safety_check_sudo() {
 }
 
 # تنفيذ امر بصلاحيات root فقط عند الحاجة
+# في وضع dry-run يطبع الامر فقط بدون تنفيذ
 _as_root() {
+    if (( SAHEL_DRY_RUN )); then
+        _dry "سيتم تنفيذ: $*"
+        return 0
+    fi
     if [[ "$(id -u)" -eq 0 ]]; then
         "$@"
     else
@@ -321,6 +381,23 @@ _safety_check_locale() {
     fi
 }
 
+# التحقق من صلاحية اسم الحزمة (منع الحقن)
+_validate_pkg_name() {
+    local pkg="$1"
+    # اسم الحزمة: حروف صغيرة، ارقام، نقاط، شرطات، زائد
+    if [[ ! "$pkg" =~ ^[a-z0-9][a-z0-9.+\-]*$ ]]; then
+        _err "اسم حزمة غير صالح: ${pkg}"
+        _log "WARN" "اسم حزمة مرفوض (validation): ${pkg}"
+        return 1
+    fi
+    # الحد الاقصى 128 حرف
+    if (( ${#pkg} > 128 )); then
+        _err "اسم الحزمة طويل جدا"
+        return 1
+    fi
+    return 0
+}
+
 # ----------------------------------------------------------------------------
 #  SECTION 05: trap
 #  معالجة الاشارات والخروج
@@ -350,6 +427,10 @@ _trap_interrupt() {
 _apt_update_list() {
     _info "تحديث قائمة الحزم (apt)..."
     _log "INFO" "apt update -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "apt-get update"
+        return 0
+    fi
     if _as_root apt-get update -qq 2>&1 | tail -2; then
         _ok "تم تحديث قائمة الحزم"
         _log "INFO" "apt update -- نجح"
@@ -375,6 +456,11 @@ _apt_show_upgradable() {
 _apt_do_upgrade() {
     _info "جاري التحديث..."
     _log "INFO" "apt upgrade -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "apt-get upgrade -y"
+        _log "INFO" "apt upgrade -- dry-run"
+        return 0
+    fi
     if DEBIAN_FRONTEND=noninteractive _as_root apt-get upgrade -y -qq 2>&1 | tail -3; then
         _ok "تم التحديث"
         _log "INFO" "apt upgrade -- نجح"
@@ -392,6 +478,10 @@ _apt_orphan_count() {
 
 _apt_autoremove() {
     _log "INFO" "apt autoremove -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "apt-get autoremove -y"
+        return 0
+    fi
     if _as_root apt-get autoremove -y -qq 2>/dev/null; then
         _ok "تم حذف الحزم اليتيمة"
         _log "INFO" "apt autoremove -- نجح"
@@ -403,6 +493,10 @@ _apt_autoremove() {
 
 _apt_clean_cache() {
     _log "INFO" "apt clean -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "apt-get clean && apt-get autoclean"
+        return 0
+    fi
     _as_root apt-get clean -qq 2>/dev/null
     _as_root apt-get autoclean -qq 2>/dev/null
     _ok "تم تنظيف الكاش"
@@ -429,7 +523,13 @@ _apt_show_pkg() {
 
 _apt_install() {
     local pkg="$1"
+    _validate_pkg_name "$pkg" || return 1
+
     _log "INFO" "apt install ${pkg} -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "apt-get install -y ${pkg}"
+        return 0
+    fi
     if _as_root apt-get install -y "$pkg" 2>&1 | tail -5; then
         _ok "تم تثبيت ${pkg}"
         _log "INFO" "apt install ${pkg} -- نجح"
@@ -442,15 +542,24 @@ _apt_install() {
 }
 
 _apt_remove() {
-    local pkg="$1"
-    _log "INFO" "apt remove ${pkg} -- بدء"
-    if _as_root apt-get remove -y "$pkg" 2>&1 | tail -3; then
-        _ok "تم حذف ${pkg} (apt)"
-        _log "INFO" "apt remove ${pkg} -- نجح"
+    local pkg="$1" purge="${2:-0}"
+    _validate_pkg_name "$pkg" || return 1
+
+    local action="remove"
+    (( purge )) && action="purge"
+
+    _log "INFO" "apt ${action} ${pkg} -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "apt-get ${action} -y ${pkg}"
+        return 0
+    fi
+    if _as_root apt-get "$action" -y "$pkg" 2>&1 | tail -3; then
+        _ok "تم حذف ${pkg} (apt ${action})"
+        _log "INFO" "apt ${action} ${pkg} -- نجح"
         return 0
     else
-        _err "فشل حذف ${pkg} (apt)"
-        _log "ERROR" "apt remove ${pkg} -- فشل"
+        _err "فشل حذف ${pkg} (apt ${action})"
+        _log "ERROR" "apt ${action} ${pkg} -- فشل"
         return 1
     fi
 }
@@ -461,7 +570,14 @@ _apt_is_installed() {
 
 _apt_removal_impact() {
     local pkg="$1"
-    _as_root apt-get --dry-run remove "$pkg" 2>/dev/null | grep '^Remv ' | awk '{print $2}'
+    local output
+    if ! output=$(_as_root apt-get --dry-run remove "$pkg" 2>&1); then
+        _warn "تعذر حساب تأثير حذف ${pkg}"
+        _log "WARN" "apt removal impact for ${pkg} -- فشل"
+        return 1
+    fi
+    echo "$output" | grep '^Remv ' | awk '{print $2}'
+    return 0
 }
 
 # ----------------------------------------------------------------------------
@@ -475,6 +591,10 @@ _snap_available() {
 
 _snap_refresh() {
     _log "INFO" "snap refresh -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "snap refresh"
+        return 0
+    fi
     local output
     if output=$(_as_root snap refresh 2>&1); then
         if echo "$output" | grep -qi 'All snaps up to date'; then
@@ -503,6 +623,10 @@ _snap_is_installed() {
 _snap_remove() {
     local pkg="$1"
     _log "INFO" "snap remove ${pkg} -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "snap remove ${pkg}"
+        return 0
+    fi
     if _as_root snap remove "$pkg" 2>&1 | tail -3; then
         _ok "تم حذف ${pkg} (snap)"
         _log "INFO" "snap remove ${pkg} -- نجح"
@@ -520,6 +644,10 @@ _snap_old_revisions_count() {
 
 _snap_clean_old() {
     _log "INFO" "snap clean old -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "snap remove (old disabled revisions)"
+        return 0
+    fi
     snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}' | while read -r sname srev; do
         _as_root snap remove "$sname" --revision="$srev" 2>/dev/null || true
     done
@@ -538,6 +666,10 @@ _flatpak_available() {
 
 _flatpak_update() {
     _log "INFO" "flatpak update -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "flatpak update -y"
+        return 0
+    fi
     if _as_root flatpak update -y --noninteractive 2>&1 | tail -3; then
         _ok "تم تحديث حزم Flatpak"
         _log "INFO" "flatpak update -- نجح"
@@ -558,6 +690,10 @@ _flatpak_is_installed() {
 _flatpak_remove() {
     local pkg="$1"
     _log "INFO" "flatpak remove ${pkg} -- بدء"
+    if (( SAHEL_DRY_RUN )); then
+        _dry "flatpak uninstall -y ${pkg}"
+        return 0
+    fi
     if _as_root flatpak uninstall -y "$pkg" 2>&1 | tail -3; then
         _ok "تم حذف ${pkg} (flatpak)"
         _log "INFO" "flatpak remove ${pkg} -- نجح"
@@ -580,11 +716,7 @@ _sysinfo_display() {
 
     echo ""
 
-    if [[ -f /etc/os-release ]]; then
-        # shellcheck source=/dev/null
-        source /etc/os-release
-        echo -e "  نظام التشغيل   : ${C_WHITE}${PRETTY_NAME:-غير معروف}${C_RESET}"
-    fi
+    echo -e "  نظام التشغيل   : ${C_WHITE}${_OS_PRETTY:-غير معروف}${C_RESET}"
     echo -e "  نواة النظام     : ${C_WHITE}$(uname -r)${C_RESET}"
     echo -e "  المعمارية       : ${C_WHITE}$(uname -m)${C_RESET}"
     echo -e "  اسم الجهاز     : ${C_WHITE}$(hostname)${C_RESET}"
@@ -773,7 +905,11 @@ _mod_cleanup() {
             _info "حجم السجلات: ${jsz}"
             if _confirm "حذف السجلات الاقدم من 7 ايام؟"; then
                 before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                _as_root journalctl --vacuum-time=7d --quiet 2>/dev/null
+                if (( SAHEL_DRY_RUN )); then
+                    _dry "journalctl --vacuum-time=7d"
+                else
+                    _as_root journalctl --vacuum-time=7d --quiet 2>/dev/null
+                fi
                 after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
                 freed=$(( after - before ))
                 (( freed > 0 )) && total_freed=$(( total_freed + freed ))
@@ -784,29 +920,41 @@ _mod_cleanup() {
         _ok "journalctl غير متوفر -- تخطي"
     fi
 
-    # --- 4. ملفات مؤقتة قديمة ---
+    # --- 4. ملفات مؤقتة قديمة (للمستخدم الحالي فقط) ---
     echo ""
-    _info "فحص الملفات المؤقتة (/tmp)..."
-    local tmp_c
-    tmp_c=$(find /tmp -type f -atime +7 2>/dev/null | wc -l || echo "0")
+    _info "فحص الملفات المؤقتة..."
+    local real_user="${SUDO_USER:-$USER}"
+    local real_uid
+    real_uid=$(id -u "$real_user" 2>/dev/null || echo "")
 
-    if (( tmp_c > 0 )); then
-        _info "${tmp_c} ملف مؤقت اقدم من 7 ايام"
-        if _confirm "حذف الملفات المؤقتة القديمة؟"; then
-            before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-            find /tmp -type f -atime +7 -delete 2>/dev/null || true
-            after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-            freed=$(( after - before ))
-            (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-            _ok "تم حذف الملفات المؤقتة"
+    if [[ -n "$real_uid" ]]; then
+        local tmp_c
+        # فقط ملفات المستخدم الحالي -- لا نمس ملفات تطبيقات اخرى
+        tmp_c=$(find /tmp -maxdepth 2 -type f -user "$real_uid" -atime +7 2>/dev/null | wc -l || echo "0")
+
+        if (( tmp_c > 0 )); then
+            _info "${tmp_c} ملف مؤقت للمستخدم ${real_user} اقدم من 7 ايام"
+            if _confirm "حذف الملفات المؤقتة القديمة؟"; then
+                before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
+                if (( SAHEL_DRY_RUN )); then
+                    _dry "find /tmp -maxdepth 2 -type f -user ${real_uid} -atime +7 -delete"
+                else
+                    find /tmp -maxdepth 2 -type f -user "$real_uid" -atime +7 -delete 2>/dev/null || true
+                fi
+                after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
+                freed=$(( after - before ))
+                (( freed > 0 )) && total_freed=$(( total_freed + freed ))
+                _ok "تم حذف الملفات المؤقتة"
+            fi
+        else
+            _ok "لا توجد ملفات مؤقتة قديمة"
         fi
     else
-        _ok "لا توجد ملفات مؤقتة قديمة"
+        _ok "تعذر تحديد المستخدم -- تخطي /tmp"
     fi
 
     # --- 5. thumbnails ---
     echo ""
-    local real_user="${SUDO_USER:-$USER}"
     local thumb_dir="/home/${real_user}/.cache/thumbnails"
     if [[ -d "$thumb_dir" ]]; then
         local tsz
@@ -815,7 +963,11 @@ _mod_cleanup() {
             _info "حجم الصور المصغرة: $(_human_size "$tsz")"
             if _confirm "حذف كاش الصور المصغرة؟"; then
                 before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                rm -rf "${thumb_dir:?}"/* 2>/dev/null || true
+                if (( SAHEL_DRY_RUN )); then
+                    _dry "rm -rf ${thumb_dir}/*"
+                else
+                    rm -rf "${thumb_dir:?}"/* 2>/dev/null || true
+                fi
                 after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
                 freed=$(( after - before ))
                 (( freed > 0 )) && total_freed=$(( total_freed + freed ))
@@ -894,7 +1046,17 @@ _pkg_list_apt() {
     local packages
     packages=$(_apt_list_manual)
     local total
-    total=$(echo "$packages" | wc -l)
+    total=$(echo "$packages" | grep -c . || echo "0")
+
+    # حالة حافة: لا توجد حزم يدوية
+    if (( total == 0 )); then
+        _header
+        _section "البرامج المثبتة يدويا (apt)"
+        _info "لا توجد حزم مثبتة يدويا"
+        _pause
+        return
+    fi
+
     local page_size=25 page=1
     local total_pages=$(( (total + page_size - 1) / page_size ))
 
@@ -972,6 +1134,14 @@ _pkg_search() {
         return
     fi
 
+    # تعقيم المدخل من الحروف الخطيرة
+    term="${term//[^a-zA-Z0-9._-]/}"
+    if [[ -z "$term" ]]; then
+        _warn "مدخل غير صالح"
+        _pause
+        return
+    fi
+
     echo ""
     _info "نتائج البحث: ${term}"
     echo ""
@@ -1020,6 +1190,9 @@ _pkg_remove() {
         return
     fi
 
+    # --- 0. تحقق من صلاحية الاسم ---
+    _validate_pkg_name "$pkg" || { _pause; return; }
+
     # --- 1. فحص الحماية ---
     if _is_protected "$pkg"; then
         echo ""
@@ -1051,12 +1224,17 @@ _pkg_remove() {
     _info "مصدر التثبيت: ${C_WHITE}${sources}${C_RESET}"
 
     # --- 3. تأثير الحذف (apt) ---
+    local do_purge=0
     if (( found_apt )); then
         echo ""
         echo -e "  ${C_YELLOW}الحزم التي ستتأثر:${C_RESET}"
 
         local impact blocked=0
-        impact=$(_apt_removal_impact "$pkg")
+        if ! impact=$(_apt_removal_impact "$pkg"); then
+            _err "تعذر حساب التأثير"
+            _pause
+            return
+        fi
 
         while IFS= read -r affected; do
             [[ -z "$affected" ]] && continue
@@ -1075,17 +1253,28 @@ _pkg_remove() {
             _pause
             return
         fi
+
+        # سؤال عن purge
+        echo ""
+        echo -e "  ${C_CYAN}نوع الحذف:${C_RESET}"
+        echo -e "    ${C_WHITE}1${C_RESET} -- حذف عادي (remove) -- يبقي ملفات الاعدادات"
+        echo -e "    ${C_WHITE}2${C_RESET} -- حذف كامل (purge)  -- يحذف كل شي"
+        echo -ne "  الاختيار [1]: "
+        read -r ptype
+        [[ "$ptype" == "2" ]] && do_purge=1
     fi
 
     # --- 4. تأكيد مزدوج ---
-    if ! _confirm_danger "سيتم حذف '${pkg}' نهائيا. هذا الاجراء قد لا يمكن التراجع عنه."; then
+    local purge_note=""
+    (( do_purge )) && purge_note=" (مع ملفات الاعدادات)"
+    if ! _confirm_danger "سيتم حذف '${pkg}'${purge_note} نهائيا. هذا الاجراء قد لا يمكن التراجع عنه."; then
         _info "تم الالغاء"
         _pause
         return
     fi
 
     # --- 5. تنفيذ ---
-    (( found_apt ))  && _apt_remove "$pkg"
+    (( found_apt ))  && _apt_remove "$pkg" "$do_purge"
     (( found_snap )) && _snap_remove "$pkg"
     (( found_fp ))   && _flatpak_remove "$pkg"
 
@@ -1130,6 +1319,10 @@ _install_from_apt() {
 
     [[ -z "$term" ]] && { _warn "لم يتم ادخال اسم"; _pause; return; }
 
+    # تعقيم المدخل
+    term="${term//[^a-zA-Z0-9._-]/}"
+    [[ -z "$term" ]] && { _warn "مدخل غير صالح"; _pause; return; }
+
     _info "جاري البحث..."
     echo ""
 
@@ -1156,7 +1349,7 @@ _install_from_apt() {
     read -r sel
 
     [[ "$sel" == "0" || -z "$sel" ]] && return
-    [[ ! "$sel" =~ ^[0-9]+$ ]] && { _warn "رقم غير صحيح"; _pause; return; }
+    _is_int "$sel" || { _warn "رقم غير صحيح"; _pause; return; }
 
     local chosen
     chosen=$(echo "$results" | sed -n "${sel}p" | awk '{print $1}')
@@ -1193,6 +1386,10 @@ _install_from_snap() {
 
     [[ -z "$term" ]] && { _warn "لم يتم ادخال اسم"; _pause; return; }
 
+    # تعقيم المدخل
+    term="${term//[^a-zA-Z0-9._-]/}"
+    [[ -z "$term" ]] && { _warn "مدخل غير صالح"; _pause; return; }
+
     _info "جاري البحث..."
     echo ""
 
@@ -1208,7 +1405,9 @@ _install_from_snap() {
 
     if _confirm "تثبيت '${pkg}' عبر Snap؟"; then
         _log "INFO" "snap install ${pkg}"
-        if _as_root snap install "$pkg" 2>&1 | tail -3; then
+        if (( SAHEL_DRY_RUN )); then
+            _dry "snap install ${pkg}"
+        elif _as_root snap install "$pkg" 2>&1 | tail -3; then
             _ok "تم تثبيت ${pkg}"
             _log "INFO" "snap install ${pkg} -- نجح"
         else
@@ -1217,6 +1416,16 @@ _install_from_snap() {
         fi
     fi
     _pause
+}
+
+# --- تحميل البرامج الشائعة من ملف خارجي او القيم الافتراضية ---
+_load_popular_categories() {
+    # لو فيه ملف اعدادات خارجي نقرأ منه
+    if [[ -f "$SAHEL_POPULAR_CONF" ]]; then
+        _log "INFO" "تحميل قائمة البرامج الشائعة من ${SAHEL_POPULAR_CONF}"
+        return 0
+    fi
+    return 1
 }
 
 _install_popular() {
@@ -1237,30 +1446,67 @@ _install_popular() {
 
     local -a names=() descs=()
 
-    case "$cat" in
-        1)
-            names=("firefox" "chromium-browser")
-            descs=("Firefox -- متصفح مفتوح المصدر" "Chromium -- متصفح مفتوح المصدر")
-            ;;
-        2)
-            names=("libreoffice" "thunderbird" "evince")
-            descs=("LibreOffice -- بديل مايكروسوفت اوفيس" "Thunderbird -- بريد الكتروني" "Evince -- عارض PDF")
-            ;;
-        3)
-            names=("vlc" "mpv" "audacity")
-            descs=("VLC -- مشغل فيديو شامل" "mpv -- مشغل خفيف" "Audacity -- محرر صوت")
-            ;;
-        4)
-            names=("git" "curl" "build-essential" "python3-pip")
-            descs=("Git -- ادارة اكواد" "cURL -- نقل بيانات" "GCC/make -- ادوات بناء" "pip -- مدير حزم بايثون")
-            ;;
-        5)
-            names=("htop" "neofetch" "net-tools" "tree" "ncdu")
-            descs=("htop -- مراقب موارد" "neofetch -- معلومات نظام" "net-tools -- ادوات شبكة" "tree -- عرض مجلدات" "ncdu -- تحليل قرص")
-            ;;
-        0) return ;;
-        *) _warn "اختيار غير صحيح"; _pause; return ;;
-    esac
+    # محاولة تحميل القوائم من ملف خارجي
+    # الصيغة في popular.conf:
+    #   [browsers]
+    #   firefox=Firefox -- متصفح مفتوح المصدر
+    #   chromium-browser=Chromium -- متصفح مفتوح المصدر
+    if _load_popular_categories; then
+        local section_name=""
+        case "$cat" in
+            1) section_name="browsers"   ;;
+            2) section_name="office"     ;;
+            3) section_name="media"      ;;
+            4) section_name="dev"        ;;
+            5) section_name="systools"   ;;
+            0) return ;;
+            *) _warn "اختيار غير صحيح"; _pause; return ;;
+        esac
+
+        local in_section=0
+        while IFS= read -r line; do
+            # تخطي التعليقات والسطور الفارغة
+            [[ -z "$line" || "$line" =~ ^# ]] && continue
+            if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+                [[ "${BASH_REMATCH[1]}" == "$section_name" ]] && in_section=1 || in_section=0
+                continue
+            fi
+            if (( in_section )); then
+                local pname="${line%%=*}"
+                local pdesc="${line#*=}"
+                names+=("$pname")
+                descs+=("$pdesc")
+            fi
+        done < "$SAHEL_POPULAR_CONF"
+    fi
+
+    # لو القوائم فاضية (ما فيه ملف او القسم فاضي) -- استخدم الافتراضي
+    if (( ${#names[@]} == 0 )); then
+        case "$cat" in
+            1)
+                names=("firefox" "chromium-browser")
+                descs=("Firefox -- متصفح مفتوح المصدر" "Chromium -- متصفح مفتوح المصدر")
+                ;;
+            2)
+                names=("libreoffice" "thunderbird" "evince")
+                descs=("LibreOffice -- بديل مايكروسوفت اوفيس" "Thunderbird -- بريد الكتروني" "Evince -- عارض PDF")
+                ;;
+            3)
+                names=("vlc" "mpv" "audacity")
+                descs=("VLC -- مشغل فيديو شامل" "mpv -- مشغل خفيف" "Audacity -- محرر صوت")
+                ;;
+            4)
+                names=("git" "curl" "build-essential" "python3-pip")
+                descs=("Git -- ادارة اكواد" "cURL -- نقل بيانات" "GCC/make -- ادوات بناء" "pip -- مدير حزم بايثون")
+                ;;
+            5)
+                names=("htop" "neofetch" "net-tools" "tree" "ncdu")
+                descs=("htop -- مراقب موارد" "neofetch -- معلومات نظام" "net-tools -- ادوات شبكة" "tree -- عرض مجلدات" "ncdu -- تحليل قرص")
+                ;;
+            0) return ;;
+            *) _warn "اختيار غير صحيح"; _pause; return ;;
+        esac
+    fi
 
     echo ""
     for i in "${!names[@]}"; do
@@ -1278,6 +1524,7 @@ _install_popular() {
     read -r sel
 
     [[ "$sel" == "0" || -z "$sel" ]] && return
+    _is_int "$sel" || { _warn "رقم غير صحيح"; _pause; return; }
 
     local idx=$((sel - 1))
     if (( idx < 0 || idx >= ${#names[@]} )); then
@@ -1301,7 +1548,104 @@ _install_popular() {
 }
 
 # ----------------------------------------------------------------------------
-#  SECTION 11: cli_args
+#  SECTION 11: self_update
+#  تحديث الاداة ذاتيا
+# ----------------------------------------------------------------------------
+
+_mod_self_update() {
+    _header
+    _section "تحديث ${SAHEL_NAME_AR}"
+
+    if ! _has_cmd curl && ! _has_cmd wget; then
+        _err "يحتاج curl او wget -- ثبت واحد منهم اولا"
+        _pause
+        return
+    fi
+
+    local script_path
+    script_path="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+
+    if [[ ! -w "$script_path" ]]; then
+        _err "لا يمكن الكتابة على: ${script_path}"
+        _info "جرب التشغيل بصلاحيات sudo"
+        _pause
+        return
+    fi
+
+    local raw_url="${SAHEL_REPO}/raw/main/sahel"
+    _info "التحقق من التحديثات..."
+    _info "المصدر: ${raw_url}"
+
+    local tmp_file
+    tmp_file=$(mktemp /tmp/sahel-update.XXXXXX) || { _err "تعذر انشاء ملف مؤقت"; _pause; return; }
+
+    # تنظيف الملف المؤقت عند الخروج من الدالة
+    trap 'rm -f "$tmp_file"' RETURN
+
+    local dl_ok=0
+    if _has_cmd curl; then
+        curl -fsSL --max-time 30 "$raw_url" -o "$tmp_file" 2>/dev/null && dl_ok=1
+    elif _has_cmd wget; then
+        wget -q --timeout=30 "$raw_url" -O "$tmp_file" 2>/dev/null && dl_ok=1
+    fi
+
+    if (( ! dl_ok )) || [[ ! -s "$tmp_file" ]]; then
+        _err "فشل تحميل التحديث"
+        _info "تأكد من الاتصال بالانترنت والرابط: ${raw_url}"
+        _pause
+        return
+    fi
+
+    # استخراج الاصدار من الملف المحمل
+    local remote_ver
+    remote_ver=$(grep -m1 '^SAHEL_VERSION=' "$tmp_file" | cut -d'"' -f2 || echo "")
+
+    if [[ -z "$remote_ver" ]]; then
+        _err "الملف المحمل لا يبدو ملف sahel صالح"
+        _pause
+        return
+    fi
+
+    if [[ "$remote_ver" == "$SAHEL_VERSION" ]]; then
+        _ok "انت على اخر اصدار: v${SAHEL_VERSION}"
+        _pause
+        return
+    fi
+
+    _info "الاصدار الحالي : v${SAHEL_VERSION}"
+    _info "الاصدار الجديد : v${remote_ver}"
+
+    if ! _confirm "تحديث الى v${remote_ver}؟"; then
+        _info "تم الالغاء"
+        _pause
+        return
+    fi
+
+    if (( SAHEL_DRY_RUN )); then
+        _dry "cp ${tmp_file} ${script_path}"
+        _pause
+        return
+    fi
+
+    # نسخة احتياطية
+    cp "$script_path" "${script_path}.bak" 2>/dev/null || true
+
+    # استبدال
+    if cp "$tmp_file" "$script_path" && chmod +x "$script_path"; then
+        _ok "تم التحديث الى v${remote_ver}"
+        _info "نسخة احتياطية: ${script_path}.bak"
+        _log "INFO" "self-update: ${SAHEL_VERSION} -> ${remote_ver}"
+        _info "اعد تشغيل الاداة لتطبيق التحديث"
+    else
+        _err "فشل نسخ الملف -- استعادة النسخة الاحتياطية"
+        cp "${script_path}.bak" "$script_path" 2>/dev/null || true
+    fi
+
+    _pause
+}
+
+# ----------------------------------------------------------------------------
+#  SECTION 12: cli_args
 #  معالجة اوامر سطر الاوامر
 # ----------------------------------------------------------------------------
 
@@ -1316,11 +1660,20 @@ _cli_help() {
     sahel --update         تحديث سريع
     sahel --clean          تنظيف سريع
     sahel --info           معلومات النظام
+    sahel --self-update    تحديث الاداة نفسها
+    sahel --dry-run        وضع المحاكاة (لا ينفذ شي)
     sahel --help           هذه المساعدة
     sahel --version        رقم الاصدار
 
+  الاوضاع المركبة:
+    sahel --dry-run --update    محاكاة التحديث بدون تنفيذ
+    sahel --dry-run --clean     محاكاة التنظيف بدون تنفيذ
+
   متغيرات البيئة:
     SAHEL_FANCY=1          تفعيل رموز Unicode (للطرفيات الداعمة)
+
+  ملفات الاعدادات:
+    ${SAHEL_POPULAR_CONF}  قائمة البرامج الشائعة (اختياري)
 
   ملف السجل:
     ${SAHEL_LOG_FILE}
@@ -1333,7 +1686,7 @@ _cli_version() {
 }
 
 # ----------------------------------------------------------------------------
-#  SECTION 12: main_menu
+#  SECTION 13: main_menu
 #  القائمة الرئيسية والتشغيل
 # ----------------------------------------------------------------------------
 
@@ -1349,6 +1702,7 @@ _main_menu() {
         echo -e "  ${C_WHITE}3${C_RESET} -- ادارة البرامج المثبتة"
         echo -e "  ${C_WHITE}4${C_RESET} -- تثبيت برامج جديدة"
         echo -e "  ${C_WHITE}5${C_RESET} -- معلومات النظام"
+        echo -e "  ${C_WHITE}6${C_RESET} -- تحديث ${SAHEL_NAME_AR}"
         echo ""
         _line '-'
         echo -e "  ${C_WHITE}0${C_RESET} -- خروج"
@@ -1363,6 +1717,7 @@ _main_menu() {
             3) _mod_packages ;;
             4) _mod_install ;;
             5) _sysinfo_display ;;
+            6) _mod_self_update ;;
             0)
                 echo ""
                 _ok "شكرا لاستخدامك ${SAHEL_NAME_AR}"
@@ -1388,55 +1743,92 @@ main() {
     _ui_init_colors
     _ui_detect_icon_mode
     _safety_check_locale
+    _safety_load_os_release
 
     # --- Trap ---
     trap _trap_cleanup EXIT
     trap _trap_interrupt INT TERM
 
-    # --- اوامر CLI المباشرة ---
-    case "${1:-}" in
-        --help|-h)
-            _cli_help
-            exit 0
-            ;;
-        --version|-v)
-            _cli_version
-            exit 0
-            ;;
-        --update)
+    # --- معالجة الخيارات ---
+    local action=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                _cli_help
+                exit 0
+                ;;
+            --version|-v)
+                _cli_version
+                exit 0
+                ;;
+            --dry-run)
+                SAHEL_DRY_RUN=1
+                shift
+                ;;
+            --update)
+                action="update"
+                shift
+                ;;
+            --clean)
+                action="clean"
+                shift
+                ;;
+            --info)
+                action="info"
+                shift
+                ;;
+            --self-update)
+                action="self-update"
+                shift
+                ;;
+            *)
+                _err "خيار غير معروف: ${1}"
+                _cli_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # --- تنفيذ الاجراء ---
+    case "$action" in
+        update)
             _safety_check_sudo
             _log_init
-            _log "INFO" "=== جلسة: تحديث سريع ==="
+            _log_rotate
+            _log "INFO" "=== جلسة: تحديث سريع $(( SAHEL_DRY_RUN )) ==="
             _safety_check_distro
             _mod_update
             exit 0
             ;;
-        --clean)
+        clean)
             _safety_check_sudo
             _log_init
+            _log_rotate
             _log "INFO" "=== جلسة: تنظيف سريع ==="
             _safety_check_distro
             _mod_cleanup
             exit 0
             ;;
-        --info)
+        info)
             _log_init
             _sysinfo_display
             exit 0
             ;;
+        self-update)
+            _log_init
+            _mod_self_update
+            exit 0
+            ;;
         "")
             # الوضع التفاعلي
-            ;;
-        *)
-            _err "خيار غير معروف: ${1}"
-            _cli_help
-            exit 1
             ;;
     esac
 
     # --- الوضع التفاعلي ---
     _safety_check_sudo
     _log_init
+    _log_rotate
     _log "INFO" "=== بدء جلسة تفاعلية ==="
     _safety_check_distro
     _main_menu
