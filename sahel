@@ -1,1837 +1,1366 @@
 #!/usr/bin/env bash
-# ============================================================================
-#  sahel v2.0.0 | مدير النظام للينكس
-#  Linux System Manager with Arabic Interface
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  ubuntu-maintain — أداة صيانة وتحديث أوبنتو سطح المكتب                  ║
+# ║  Production-grade Ubuntu Desktop maintenance & update utility            ║
+# ╠═══════════════════════════════════════════════════════════════════════════╣
+# ║  Author  : Fahad Alsharari                                              ║
+# ║  Website : https://fahadalsharari.sa                                    ║
+# ║  License : MIT                                                          ║
+# ║  Version : 2.0.0                                                        ║
+# ║  Date    : 2026-03-25                                                   ║
+# ║  Requires: Ubuntu Desktop 20.04+ / Bash 4.4+                           ║
+# ╠═══════════════════════════════════════════════════════════════════════════╣
+# ║  apt-get مستخدم بدلاً من apt لأنّ واجهة apt-get مستقرة ومصمّمة          ║
+# ║  للسكربتات، بينما apt مخصصة للاستخدام التفاعلي وقد يتغيّر سلوكها.      ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 #
-#  Author  : FahadAlsharari
-#  Website : FahadAlsharari.sa
-#  Version : 2.0.0
-#  Date    : 2026-03-21
-#  License : MIT
+# MIT License
 #
-#  Copyright (c) 2026 FahadAlsharari (FahadAlsharari.sa)
+# Copyright (c) 2026 Fahad Alsharari — https://fahadalsharari.sa
 #
-#  Permission is hereby granted, free of charge, to any person obtaining
-#  a copy of this software and associated documentation files (the
-#  "Software"), to deal in the Software without restriction, including
-#  without limitation the rights to use, copy, modify, merge, publish,
-#  distribute, sublicense, and/or sell copies of the Software, and to
-#  permit persons to whom the Software is furnished to do so, subject to
-#  the following conditions:
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-#  The above copyright notice and this permission notice shall be
-#  included in all copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
-# ============================================================================
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
-set -euo pipefail
+set -uo pipefail
+IFS=$'\n\t'
 
-# ----------------------------------------------------------------------------
-#  SECTION 01: config
-#  الاعدادات العامة والثوابت
-# ----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# الثوابت العامة
+# ─────────────────────────────────────────────────────────────────────────────
+readonly SCRIPT_NAME="ubuntu-maintain"
+readonly SCRIPT_VERSION="2.0.0"
+readonly SCRIPT_DATE="2026-03-25"
+readonly SCRIPT_AUTHOR="Fahad Alsharari"
+readonly SCRIPT_URL="https://fahadalsharari.sa"
 
-readonly SAHEL_VERSION="2.0.0"
-readonly SAHEL_NAME="sahel"
-readonly SAHEL_NAME_AR="سهل"
-readonly SAHEL_AUTHOR="FahadAlsharari"
-readonly SAHEL_SITE="FahadAlsharari.sa"
-readonly SAHEL_REPO="https://github.com/FahadAlsharari/sahel"
-readonly SAHEL_LOG_DIR="/var/log/sahel"
-readonly SAHEL_LOG_FILE="${SAHEL_LOG_DIR}/sahel.log"
-readonly SAHEL_CONF_DIR="/etc/sahel"
-readonly SAHEL_POPULAR_CONF="${SAHEL_CONF_DIR}/popular.conf"
+readonly MIN_DISK_MB=500          # الحد الأدنى للمساحة الحرة (ميغابايت)
+readonly LOCK_WAIT_SEC=120        # مهلة انتظار تحرير قفل apt (ثانية)
+readonly CONNECTIVITY_TIMEOUT=5   # مهلة فحص الاتصال (ثوانٍ)
+readonly SUDO_KEEPALIVE_SEC=60    # تجديد sudo كل 60 ثانية
 
-# وضع الرموز: ascii (افتراضي آمن) او fancy (يحتاج دعم Unicode)
-SAHEL_ICON_MODE="ascii"
+# مسارات التسجيل
+LOG_DIR="/var/log/${SCRIPT_NAME}"
+LOG_FILE="${LOG_DIR}/${SCRIPT_NAME}-$(date +%Y%m%d-%H%M%S).log"
 
-# وضع المحاكاة: لو 1 ما ينفذ شي فعلي (--dry-run)
-SAHEL_DRY_RUN=0
+# متغير للتحكم في الوضع التفاعلي
+INTERACTIVE_MODE=false
 
-# متغيرات os-release -- تُملأ مرة واحدة عند التهيئة
-_OS_ID=""
-_OS_PRETTY=""
+# ─────────────────────────────────────────────────────────────────────────────
+# عدّادات التقرير النهائي
+# ─────────────────────────────────────────────────────────────────────────────
+declare -i COUNT_SUCCESS=0
+declare -i COUNT_SKIPPED=0
+declare -i COUNT_FAILED=0
+declare -i COUNT_WARNINGS=0
+declare -a SUMMARY_LINES=()
+declare -a WARNING_LINES=()
+declare -a ERROR_LINES=()
 
-# الحزم المحمية من الحذف - حذف اي وحدة منها يدمر النظام
-readonly PROTECTED_PACKAGES=(
-    "ubuntu-minimal" "ubuntu-standard" "ubuntu-desktop"
-    "ubuntu-desktop-minimal" "base-files" "bash" "coreutils"
-    "dpkg" "apt" "systemd" "init" "linux-base" "linux-generic"
-    "linux-image-generic" "grub-common" "grub-efi" "grub-pc"
-    "sudo" "passwd" "login" "mount" "util-linux"
-    "libc6" "libstdc++6" "libgcc-s1" "zlib1g"
-    "network-manager" "networkd-dispatcher"
-    "dbus" "udev" "kmod" "adduser"
-    "apt-utils" "dpkg-dev" "gnupg" "gpgv"
-)
+# حالة كل نظام حزم
+APT_STATUS="—"
+SNAP_STATUS="—"
+FLATPAK_STATUS="—"
+CLEANUP_STATUS="—"
+REBOOT_RECOMMENDED="لا"
 
-# ----------------------------------------------------------------------------
-#  SECTION 02: ui
-#  الالوان والرموز ودوال الواجهة
-# ----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# الألوان والتنسيق — مع fallback لبيئات بدون ألوان
+# ─────────────────────────────────────────────────────────────────────────────
+_COLORS_INIT=""
+C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN=""
+C_YELLOW="" C_BLUE="" C_MAGENTA="" C_CYAN="" C_WHITE="" C_GRAY=""
+C_BG_RED="" C_BG_GREEN="" C_BG_BLUE=""
+HAS_COLOR=false
 
-# --- كشف دعم الالوان ---
-_ui_init_colors() {
-    if [[ -t 1 ]] && command -v tput &>/dev/null && [[ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]]; then
-        C_RESET='\033[0m'
-        C_BOLD='\033[1m'
-        C_DIM='\033[2m'
-        C_RED='\033[31m'
-        C_GREEN='\033[32m'
-        C_YELLOW='\033[33m'
-        C_BLUE='\033[34m'
-        C_CYAN='\033[36m'
-        C_WHITE='\033[1;37m'
-        C_BG_RED='\033[41m'
+setup_colors() {
+    [[ -n "${_COLORS_INIT}" ]] && return 0
+    _COLORS_INIT=1
+    if [[ -t 1 ]] && [[ "${TERM:-dumb}" != "dumb" ]] && command -v tput &>/dev/null && tput colors &>/dev/null && (( $(tput colors) >= 8 )); then
+        C_RESET=$'\033[0m'
+        C_BOLD=$'\033[1m'
+        C_DIM=$'\033[2m'
+        C_RED=$'\033[1;31m'
+        C_GREEN=$'\033[1;32m'
+        C_YELLOW=$'\033[1;33m'
+        C_BLUE=$'\033[1;34m'
+        C_MAGENTA=$'\033[1;35m'
+        C_CYAN=$'\033[1;36m'
+        C_WHITE=$'\033[1;37m'
+        C_GRAY=$'\033[0;90m'
+        C_BG_RED=$'\033[41m'
+        C_BG_GREEN=$'\033[42m'
+        C_BG_BLUE=$'\033[44m'
+        HAS_COLOR=true
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# رموز Unicode — مع fallback لـ ASCII
+# ─────────────────────────────────────────────────────────────────────────────
+_SYMBOLS_INIT=""
+SYM_OK="[OK]" SYM_FAIL="[X]" SYM_WARN="[!]" SYM_INFO="[i]"
+SYM_ARROW="<-" SYM_BULLET="*" SYM_GEAR="[G]" SYM_SHIELD="[S]"
+SYM_BROOM="[C]" SYM_ROCKET="[R]"
+SYM_BOX_H="-" SYM_BOX_V="|" SYM_BOX_TL="+" SYM_BOX_TR="+"
+SYM_BOX_BL="+" SYM_BOX_BR="+"
+SYM_SPINNER_FRAMES=("-" "\\" "|" "/")
+
+setup_symbols() {
+    [[ -n "${_SYMBOLS_INIT}" ]] && return 0
+    _SYMBOLS_INIT=1
+    if [[ "${LANG:-}" == *UTF-8* ]] || [[ "${LC_ALL:-}" == *UTF-8* ]] || [[ "${LC_CTYPE:-}" == *UTF-8* ]]; then
+        SYM_OK="✔"
+        SYM_FAIL="✘"
+        SYM_WARN="⚠"
+        SYM_INFO="ℹ"
+        SYM_ARROW="←"
+        SYM_BULLET="●"
+        SYM_GEAR="⚙"
+        SYM_SHIELD="🛡"
+        SYM_BROOM="🧹"
+        SYM_ROCKET="🚀"
+        SYM_BOX_H="─"
+        SYM_BOX_V="│"
+        SYM_BOX_TL="┌"
+        SYM_BOX_TR="┐"
+        SYM_BOX_BL="└"
+        SYM_BOX_BR="┘"
+        SYM_SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# التسجيل (Logging)
+# ─────────────────────────────────────────────────────────────────────────────
+_log_target=""
+
+init_logging() {
+    # محاولة إنشاء مجلد التسجيل الأساسي
+    if mkdir -p "${LOG_DIR}" 2>/dev/null && [[ -w "${LOG_DIR}" ]]; then
+        touch "${LOG_FILE}" 2>/dev/null || true
+        _log_target="${LOG_FILE}"
     else
-        C_RESET='' C_BOLD='' C_DIM='' C_RED='' C_GREEN=''
-        C_YELLOW='' C_BLUE='' C_CYAN='' C_WHITE='' C_BG_RED=''
+        # fallback: /tmp
+        local fallback_dir="/tmp/${SCRIPT_NAME}-logs"
+        mkdir -p "${fallback_dir}" 2>/dev/null || true
+        LOG_DIR="${fallback_dir}"
+        LOG_FILE="${fallback_dir}/${SCRIPT_NAME}-$(date +%Y%m%d-%H%M%S).log"
+        touch "${LOG_FILE}" 2>/dev/null || true
+        _log_target="${LOG_FILE}"
     fi
+    log_raw "═══ بدء التشغيل: ${SCRIPT_NAME} v${SCRIPT_VERSION} — $(date '+%Y-%m-%d %H:%M:%S %Z') ═══"
 }
 
-# --- كشف دعم Unicode ---
-_ui_detect_icon_mode() {
-    # لو المستخدم حدد بنفسه عبر متغير بيئة -- نحترم اختياره
-    if [[ "${SAHEL_FANCY:-}" == "1" ]]; then
-        SAHEL_ICON_MODE="fancy"
-        return
-    fi
-    # الافتراضي دائماً ascii -- الاكثر توافقاً
-    SAHEL_ICON_MODE="ascii"
+log_raw() {
+    [[ -n "${_log_target}" ]] && printf '%s\n' "$*" >> "${_log_target}" 2>/dev/null || true
 }
 
-# --- الرموز حسب الوضع ---
-_icon() {
-    local name="${1:-default}"
-    if [[ "$SAHEL_ICON_MODE" == "fancy" ]]; then
-        case "$name" in
-            ok)    printf "\xe2\x9c\x93" ;;
-            fail)  printf "\xe2\x9c\x97" ;;
-            warn)  printf "!"  ;;
-            info)  printf "i"  ;;
-            dry)   printf "~"  ;;
-            *)     printf "*"  ;;
-        esac
-    else
-        case "$name" in
-            ok)    printf "[OK]"  ;;
-            fail)  printf "[X]"   ;;
-            warn)  printf "[!]"   ;;
-            info)  printf "[i]"   ;;
-            dry)   printf "[DRY]" ;;
-            *)     printf "[-]"   ;;
-        esac
-    fi
-}
-
-# --- عرض الطرفية ---
-_term_width() {
-    local w
-    w=$(tput cols 2>/dev/null || echo 70)
-    (( w < 40 )) && w=40
-    (( w > 100 )) && w=100
-    echo "$w"
-}
-
-# --- فاصل افقي آمن (ASCII فقط) ---
-_line() {
-    local char="${1:--}" len="${2:-0}"
-    if (( len == 0 )); then
-        len=$(( $(_term_width) - 4 ))
-    fi
-    printf '  '
-    printf '%*s' "$len" '' | tr ' ' "$char"
-    printf '\n'
-}
-
-# --- دوال الطباعة ---
-_ok() {
-    echo -e "  ${C_GREEN}$(_icon ok)${C_RESET} $1"
-}
-
-_err() {
-    echo -e "  ${C_RED}$(_icon fail)${C_RESET} $1" >&2
-}
-
-_warn() {
-    echo -e "  ${C_YELLOW}$(_icon warn)${C_RESET} $1"
-}
-
-_info() {
-    echo -e "  ${C_CYAN}$(_icon info)${C_RESET} $1"
-}
-
-_dry() {
-    echo -e "  ${C_YELLOW}$(_icon dry)${C_RESET} ${C_DIM}(محاكاة)${C_RESET} $1"
-}
-
-# --- عنوان قسم ---
-_section() {
-    echo ""
-    echo -e "  ${C_BOLD}${C_BLUE}$1${C_RESET}"
-    _line '-'
-}
-
-# --- مسح الشاشة + الترويسة ---
-_header() {
-    clear 2>/dev/null || printf '\033[2J\033[H'
-    echo ""
-    _line '='
-    echo -e "  ${C_BOLD}${C_WHITE}${SAHEL_NAME_AR} (${SAHEL_NAME}) v${SAHEL_VERSION}${C_RESET}"
-    echo -e "  ${C_DIM}${SAHEL_AUTHOR} -- ${SAHEL_SITE}${C_RESET}"
-    if (( SAHEL_DRY_RUN )); then
-        echo -e "  ${C_YELLOW}${C_BOLD}-- وضع المحاكاة (dry-run) -- لا يتم تنفيذ اي تغيير فعلي --${C_RESET}"
-    fi
-    _line '='
-}
-
-# --- طلب تأكيد ---
-_confirm() {
-    local msg="$1"
-    echo ""
-    echo -e "  ${C_YELLOW}$(_icon warn) ${msg}${C_RESET}"
-    echo -ne "  المتابعة؟ (ن/ل) [ل]: "
-    local answer
-    read -r answer
-    case "$answer" in
-        [نyY]|نعم|yes|YES) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# --- تأكيد مزدوج للعمليات الخطيرة ---
-_confirm_danger() {
-    local msg="$1"
-    echo ""
-    echo -e "  ${C_BG_RED}${C_WHITE}${C_BOLD} تحذير ${C_RESET}"
-    echo -e "  ${C_RED}${msg}${C_RESET}"
-    echo -ne "  اكتب '${C_WHITE}نعم${C_RESET}' بالضبط للتأكيد: "
-    local answer
-    read -r answer
-    [[ "$answer" == "نعم" || "$answer" == "yes" ]]
-}
-
-# --- انتظار ---
-_pause() {
-    echo ""
-    echo -ne "  ${C_DIM}[Enter] للرجوع...${C_RESET}"
-    read -r
-}
-
-# --- حجم مقروء ---
-_human_size() {
-    local bytes="${1:-0}"
-    if (( bytes >= 1073741824 )); then
-        awk "BEGIN{printf \"%.1f GB\", ${bytes}/1073741824}"
-    elif (( bytes >= 1048576 )); then
-        awk "BEGIN{printf \"%.1f MB\", ${bytes}/1048576}"
-    elif (( bytes >= 1024 )); then
-        awk "BEGIN{printf \"%.1f KB\", ${bytes}/1024}"
-    else
-        printf "%d B" "$bytes"
-    fi
-}
-
-# --- تحقق من ان المدخل رقم صحيح ---
-_is_int() {
-    [[ "${1:-}" =~ ^[0-9]+$ ]]
-}
-
-# ----------------------------------------------------------------------------
-#  SECTION 03: logging
-#  نظام التسجيل
-# ----------------------------------------------------------------------------
-
-_log_init() {
-    if [[ ! -d "$SAHEL_LOG_DIR" ]]; then
-        sudo mkdir -p "$SAHEL_LOG_DIR" 2>/dev/null || {
-            _warn "تعذر انشاء مجلد السجلات: ${SAHEL_LOG_DIR}"
-            return 1
-        }
-        sudo chmod 750 "$SAHEL_LOG_DIR" 2>/dev/null || true
-    fi
-    # نتأكد ان المستخدم الحالي يقدر يكتب
-    if [[ ! -w "$SAHEL_LOG_DIR" ]]; then
-        sudo chown "$(id -u):$(id -g)" "$SAHEL_LOG_DIR" 2>/dev/null || true
-    fi
-    # ضبط صلاحيات ملف السجل -- 640 فقط المالك يقرأ ويكتب والمجموعة تقرأ
-    if [[ ! -f "$SAHEL_LOG_FILE" ]]; then
-        touch "$SAHEL_LOG_FILE" 2>/dev/null || true
-        chmod 640 "$SAHEL_LOG_FILE" 2>/dev/null || true
-    fi
-}
-
-_log() {
-    local level="$1" message="$2"
+log_entry() {
+    local level="$1"; shift
     local ts
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
-    printf '[%s] [%-5s] %s\n' "$ts" "$level" "$message" >> "$SAHEL_LOG_FILE" 2>/dev/null || true
+    log_raw "[${ts}] [${level}] $*"
 }
 
-# --- تدوير السجلات اذا تجاوز 10MB ---
-_log_rotate() {
-    if [[ -f "$SAHEL_LOG_FILE" ]]; then
-        local sz
-        sz=$(stat -c%s "$SAHEL_LOG_FILE" 2>/dev/null || echo 0)
-        if (( sz > 10485760 )); then
-            mv "$SAHEL_LOG_FILE" "${SAHEL_LOG_FILE}.1" 2>/dev/null || true
-            gzip -f "${SAHEL_LOG_FILE}.1" 2>/dev/null || true
-            touch "$SAHEL_LOG_FILE" 2>/dev/null || true
-            chmod 640 "$SAHEL_LOG_FILE" 2>/dev/null || true
-            _log "INFO" "تم تدوير ملف السجل"
-        fi
-    fi
+log_info()    { log_entry "INFO"    "$@"; }
+log_success() { log_entry "SUCCESS" "$@"; }
+log_warn()    { log_entry "WARN"    "$@"; WARNING_LINES+=("$*"); (( COUNT_WARNINGS++ )) || true; }
+log_error()   { log_entry "ERROR"   "$@"; ERROR_LINES+=("$*"); }
+log_skip()    { log_entry "SKIP"    "$@"; (( COUNT_SKIPPED++ )) || true; }
+log_cmd()     { log_entry "CMD"     "$@"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# دوال الطباعة المنسقة
+# ─────────────────────────────────────────────────────────────────────────────
+_repeat_char() {
+    local char="$1" count="$2" i
+    for ((i=0; i<count; i++)); do printf '%s' "${char}"; done
 }
 
-# ----------------------------------------------------------------------------
-#  SECTION 04: safety
-#  فحوصات الامان وحماية النظام
-# ----------------------------------------------------------------------------
-
-# تحميل معلومات التوزيعة مرة واحدة فقط
-_safety_load_os_release() {
-    if [[ -f /etc/os-release ]]; then
-        # استخراج آمن بدون source كامل
-        _OS_ID=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"' || echo "unknown")
-        _OS_PRETTY=$(grep '^PRETTY_NAME=' /etc/os-release | cut -d= -f2- | tr -d '"' || echo "غير معروف")
-    else
-        _OS_ID="unknown"
-        _OS_PRETTY="غير معروف"
-    fi
+print_line() {
+    local width=${1:-70}
+    local ch="${2:-${SYM_BOX_H}}"
+    printf "${C_GRAY}"
+    _repeat_char "${ch}" "${width}"
+    printf "${C_RESET}\n"
 }
 
-# فحص التوزيعة
-_safety_check_distro() {
-    if [[ -z "$_OS_ID" ]]; then
-        _safety_load_os_release
-    fi
-
-    case "$_OS_ID" in
-        ubuntu|debian|linuxmint|pop|zorin|elementary|neon)
-            _log "INFO" "التوزيعة: ${_OS_PRETTY}"
-            ;;
-        *)
-            _warn "التوزيعة (${_OS_PRETTY}) غير مختبرة بالكامل"
-            _info "الاداة مصممة لتوزيعات Debian/Ubuntu"
-            if ! _confirm "تريد الاستمرار؟"; then
-                exit 0
-            fi
-            ;;
-    esac
-}
-
-# فحص هل المستخدم يملك sudo
-_safety_check_sudo() {
-    if [[ "$(id -u)" -eq 0 ]]; then
-        return 0
-    fi
-    if ! sudo -n true 2>/dev/null; then
-        _info "بعض العمليات تحتاج صلاحيات مدير النظام"
-        if ! sudo true 2>/dev/null; then
-            _err "تعذر الحصول على صلاحيات sudo"
-            exit 1
-        fi
-    fi
-}
-
-# تنفيذ امر بصلاحيات root فقط عند الحاجة
-# في وضع dry-run يطبع الامر فقط بدون تنفيذ
-_as_root() {
-    if (( SAHEL_DRY_RUN )); then
-        _dry "سيتم تنفيذ: $*"
-        return 0
-    fi
-    if [[ "$(id -u)" -eq 0 ]]; then
-        "$@"
-    else
-        sudo "$@"
-    fi
-}
-
-# هل الحزمة محمية؟
-_is_protected() {
-    local pkg="$1"
-    local p
-    for p in "${PROTECTED_PACKAGES[@]}"; do
-        [[ "$pkg" == "$p" ]] && return 0
-    done
-    return 1
-}
-
-# هل امر معين موجود؟
-_has_cmd() {
-    command -v "$1" &>/dev/null
-}
-
-# فحص locale
-_safety_check_locale() {
-    local current_lc="${LC_ALL:-${LANG:-}}"
-
-    if [[ -z "$current_lc" ]]; then
-        if locale -a 2>/dev/null | grep -qi 'en_US.utf8\|en_US.UTF-8'; then
-            export LANG="en_US.UTF-8"
-        fi
-    fi
-
-    if [[ "${current_lc,,}" != *utf-8* && "${current_lc,,}" != *utf8* ]]; then
-        if locale -a 2>/dev/null | grep -qi 'utf-8\|utf8'; then
-            export LC_ALL="en_US.UTF-8" 2>/dev/null || true
-        fi
-    fi
-}
-
-# التحقق من صلاحية اسم الحزمة (منع الحقن)
-_validate_pkg_name() {
-    local pkg="$1"
-    # اسم الحزمة: حروف صغيرة، ارقام، نقاط، شرطات، زائد
-    if [[ ! "$pkg" =~ ^[a-z0-9][a-z0-9.+\-]*$ ]]; then
-        _err "اسم حزمة غير صالح: ${pkg}"
-        _log "WARN" "اسم حزمة مرفوض (validation): ${pkg}"
-        return 1
-    fi
-    # الحد الاقصى 128 حرف
-    if (( ${#pkg} > 128 )); then
-        _err "اسم الحزمة طويل جدا"
-        return 1
-    fi
-    return 0
-}
-
-# ----------------------------------------------------------------------------
-#  SECTION 05: trap
-#  معالجة الاشارات والخروج
-# ----------------------------------------------------------------------------
-
-_trap_cleanup() {
-    local code=$?
-    if [[ $code -ne 0 && $code -ne 130 ]]; then
-        _log "WARN" "خروج غير طبيعي بكود: ${code}"
-    fi
-    _log "INFO" "--- انتهاء الجلسة ---"
-    tput cnorm 2>/dev/null || true
-    stty echo 2>/dev/null || true
-}
-
-_trap_interrupt() {
+print_header_box() {
+    local text="$1"
+    local width=70
     echo ""
-    _info "تم الالغاء"
+    printf "${C_CYAN}${SYM_BOX_TL}"
+    _repeat_char "${SYM_BOX_H}" "$((width - 2))"
+    printf "${SYM_BOX_TR}${C_RESET}\n"
+    printf "${C_CYAN}${SYM_BOX_V}${C_RESET}  ${C_BOLD}${C_WHITE}%s${C_RESET}" "${text}"
+    local text_len=${#text}
+    local padding=$((width - 4 - text_len))
+    if (( padding > 0 )); then
+        printf '%*s' "${padding}" ''
+    fi
+    printf "${C_CYAN}${SYM_BOX_V}${C_RESET}\n"
+    printf "${C_CYAN}${SYM_BOX_BL}"
+    _repeat_char "${SYM_BOX_H}" "$((width - 2))"
+    printf "${SYM_BOX_BR}${C_RESET}\n"
+}
+
+msg_ok()   { printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %s\n" "$*"; log_success "$*"; }
+msg_fail() { printf "  ${C_RED}${SYM_FAIL}${C_RESET}  %s\n" "$*"; log_error "$*"; }
+msg_warn() { printf "  ${C_YELLOW}${SYM_WARN}${C_RESET}  %s\n" "$*"; log_warn "$*"; }
+msg_info() { printf "  ${C_BLUE}${SYM_INFO}${C_RESET}  %s\n" "$*"; log_info "$*"; }
+msg_step() { printf "\n  ${C_MAGENTA}${SYM_GEAR}${C_RESET}  ${C_BOLD}%s${C_RESET}\n" "$*"; log_info "خطوة: $*"; }
+
+# مؤشر تقدم بسيط (spinner) — يُشغَّل في الخلفية
+_spinner_pid=""
+start_spinner() {
+    local msg="${1:-جارٍ التنفيذ...}"
+    if [[ ! -t 1 ]]; then return 0; fi
+    (
+        local i=0
+        local frames_count=${#SYM_SPINNER_FRAMES[@]}
+        while true; do
+            printf "\r  ${C_CYAN}%s${C_RESET}  %s " "${SYM_SPINNER_FRAMES[$((i % frames_count))]}" "${msg}"
+            sleep 0.12
+            (( i++ )) || true
+        done
+    ) &
+    _spinner_pid=$!
+    disown "${_spinner_pid}" 2>/dev/null || true
+}
+
+stop_spinner() {
+    if [[ -n "${_spinner_pid}" ]]; then
+        kill "${_spinner_pid}" 2>/dev/null || true
+        wait "${_spinner_pid}" 2>/dev/null || true
+        _spinner_pid=""
+        printf "\r%*s\r" 80 ""   # مسح السطر
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# معالجة الإشارات والأخطاء (Trap Handlers)
+# ─────────────────────────────────────────────────────────────────────────────
+cleanup_on_exit() {
+    stop_spinner
+    stop_sudo_keepalive
+    if [[ -f "${LOG_FILE}" ]] && [[ -s "${LOG_FILE}" ]]; then
+        printf "\n  ${C_GRAY}${SYM_INFO} السجل: ${LOG_FILE}${C_RESET}\n"
+    fi
+}
+
+on_interrupt() {
+    stop_spinner
+    printf "\n\n  ${C_YELLOW}${SYM_WARN} تم إلغاء التنفيذ بواسطة المستخدم (Ctrl+C)${C_RESET}\n"
+    log_warn "إلغاء بواسطة المستخدم (SIGINT/SIGTERM)"
     exit 130
 }
 
-# ----------------------------------------------------------------------------
-#  SECTION 06: apt
-#  عمليات مدير الحزم apt
-# ----------------------------------------------------------------------------
+trap 'on_interrupt' INT TERM
+trap 'cleanup_on_exit' EXIT
 
-_apt_update_list() {
-    _info "تحديث قائمة الحزم (apt)..."
-    _log "INFO" "apt update -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "apt-get update"
-        return 0
+# ─────────────────────────────────────────────────────────────────────────────
+# تجديد صلاحيات sudo بشكل دوري لتجنب انتهاء الصلاحية أثناء التحديث
+# ─────────────────────────────────────────────────────────────────────────────
+_sudo_keepalive_pid=""
+
+start_sudo_keepalive() {
+    (
+        while true; do
+            sudo -n true 2>/dev/null || true
+            sleep "${SUDO_KEEPALIVE_SEC}"
+        done
+    ) &
+    _sudo_keepalive_pid=$!
+    disown "${_sudo_keepalive_pid}" 2>/dev/null || true
+}
+
+stop_sudo_keepalive() {
+    if [[ -n "${_sudo_keepalive_pid}" ]]; then
+        kill "${_sudo_keepalive_pid}" 2>/dev/null || true
+        wait "${_sudo_keepalive_pid}" 2>/dev/null || true
+        _sudo_keepalive_pid=""
     fi
-    if _as_root apt-get update -qq 2>&1 | tail -2; then
-        _ok "تم تحديث قائمة الحزم"
-        _log "INFO" "apt update -- نجح"
-        return 0
-    else
-        _err "فشل تحديث قائمة الحزم"
-        _log "ERROR" "apt update -- فشل"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# فحوصات ما قبل التشغيل (Pre-flight Checks)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# إعادة تشغيل بـ sudo إذا لم نكن root
+ensure_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        msg_info "يتطلب صلاحيات المسؤول — سيُطلب منك إدخال كلمة المرور..."
+        exec sudo --preserve-env=TERM,LANG,LC_ALL,LC_CTYPE,HOME bash "$0" "$@"
+    fi
+}
+
+check_ubuntu() {
+    if [[ ! -f /etc/os-release ]]; then
+        msg_fail "لم يُعثر على /etc/os-release — هذه الأداة مخصصة لأوبنتو"
         return 1
     fi
-}
-
-_apt_upgradable_count() {
-    apt list --upgradable 2>/dev/null | grep -c 'upgradable' || echo "0"
-}
-
-_apt_show_upgradable() {
-    local max="${1:-20}"
-    apt list --upgradable 2>/dev/null | grep -v '^Listing' | head -"$max" | while IFS= read -r line; do
-        echo -e "    ${C_DIM}- ${line}${C_RESET}"
-    done
-}
-
-_apt_do_upgrade() {
-    _info "جاري التحديث..."
-    _log "INFO" "apt upgrade -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "apt-get upgrade -y"
-        _log "INFO" "apt upgrade -- dry-run"
-        return 0
-    fi
-    if DEBIAN_FRONTEND=noninteractive _as_root apt-get upgrade -y -qq 2>&1 | tail -3; then
-        _ok "تم التحديث"
-        _log "INFO" "apt upgrade -- نجح"
-        return 0
-    else
-        _err "حدث خطأ اثناء التحديث"
-        _log "ERROR" "apt upgrade -- فشل"
+    # shellcheck source=/dev/null
+    source /etc/os-release
+    if [[ "${ID:-}" != "ubuntu" ]]; then
+        msg_fail "نظام التشغيل (${ID:-غير معروف}) غير مدعوم — مطلوب Ubuntu"
         return 1
     fi
-}
-
-_apt_orphan_count() {
-    _as_root apt-get --dry-run autoremove 2>/dev/null | grep -c '^Remv ' || echo "0"
-}
-
-_apt_autoremove() {
-    _log "INFO" "apt autoremove -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "apt-get autoremove -y"
-        return 0
-    fi
-    if _as_root apt-get autoremove -y -qq 2>/dev/null; then
-        _ok "تم حذف الحزم اليتيمة"
-        _log "INFO" "apt autoremove -- نجح"
-    else
-        _err "فشل حذف الحزم اليتيمة"
-        _log "ERROR" "apt autoremove -- فشل"
-    fi
-}
-
-_apt_clean_cache() {
-    _log "INFO" "apt clean -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "apt-get clean && apt-get autoclean"
-        return 0
-    fi
-    _as_root apt-get clean -qq 2>/dev/null
-    _as_root apt-get autoclean -qq 2>/dev/null
-    _ok "تم تنظيف الكاش"
-    _log "INFO" "apt clean -- نجح"
-}
-
-_apt_cache_size() {
-    du -sb /var/cache/apt/archives/ 2>/dev/null | awk '{print $1}' || echo "0"
-}
-
-_apt_list_manual() {
-    apt-mark showmanual 2>/dev/null | sort
-}
-
-_apt_search() {
-    local term="$1"
-    apt-cache search "$term" 2>/dev/null | head -20
-}
-
-_apt_show_pkg() {
-    local pkg="$1"
-    apt-cache show "$pkg" 2>/dev/null | grep -E '^(Package|Version|Installed-Size|Description)' | head -6
-}
-
-_apt_install() {
-    local pkg="$1"
-    _validate_pkg_name "$pkg" || return 1
-
-    _log "INFO" "apt install ${pkg} -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "apt-get install -y ${pkg}"
-        return 0
-    fi
-    if _as_root apt-get install -y "$pkg" 2>&1 | tail -5; then
-        _ok "تم تثبيت ${pkg}"
-        _log "INFO" "apt install ${pkg} -- نجح"
-        return 0
-    else
-        _err "فشل تثبيت ${pkg}"
-        _log "ERROR" "apt install ${pkg} -- فشل"
-        return 1
-    fi
-}
-
-_apt_remove() {
-    local pkg="$1" purge="${2:-0}"
-    _validate_pkg_name "$pkg" || return 1
-
-    local action="remove"
-    (( purge )) && action="purge"
-
-    _log "INFO" "apt ${action} ${pkg} -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "apt-get ${action} -y ${pkg}"
-        return 0
-    fi
-    if _as_root apt-get "$action" -y "$pkg" 2>&1 | tail -3; then
-        _ok "تم حذف ${pkg} (apt ${action})"
-        _log "INFO" "apt ${action} ${pkg} -- نجح"
-        return 0
-    else
-        _err "فشل حذف ${pkg} (apt ${action})"
-        _log "ERROR" "apt ${action} ${pkg} -- فشل"
-        return 1
-    fi
-}
-
-_apt_is_installed() {
-    dpkg -l "$1" 2>/dev/null | grep -q '^ii'
-}
-
-_apt_removal_impact() {
-    local pkg="$1"
-    local output
-    if ! output=$(_as_root apt-get --dry-run remove "$pkg" 2>&1); then
-        _warn "تعذر حساب تأثير حذف ${pkg}"
-        _log "WARN" "apt removal impact for ${pkg} -- فشل"
-        return 1
-    fi
-    echo "$output" | grep '^Remv ' | awk '{print $2}'
+    msg_ok "نظام التشغيل: Ubuntu ${VERSION_ID:-} (${VERSION_CODENAME:-})"
+    log_info "Ubuntu ${VERSION_ID:-} — ${PRETTY_NAME:-}"
     return 0
 }
 
-# ----------------------------------------------------------------------------
-#  SECTION 07: snap
-#  عمليات مدير الحزم snap
-# ----------------------------------------------------------------------------
-
-_snap_available() {
-    _has_cmd snap
-}
-
-_snap_refresh() {
-    _log "INFO" "snap refresh -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "snap refresh"
-        return 0
-    fi
-    local output
-    if output=$(_as_root snap refresh 2>&1); then
-        if echo "$output" | grep -qi 'All snaps up to date'; then
-            _ok "جميع حزم Snap محدثة"
-        else
-            _ok "تم تحديث حزم Snap"
-            echo "$output" | head -5 | while IFS= read -r l; do
-                echo -e "    ${C_DIM}${l}${C_RESET}"
-            done
-        fi
-        _log "INFO" "snap refresh -- نجح"
-    else
-        _warn "فشل تحديث بعض حزم Snap"
-        _log "WARN" "snap refresh -- فشل جزئي"
-    fi
-}
-
-_snap_list() {
-    snap list 2>/dev/null
-}
-
-_snap_is_installed() {
-    snap list "$1" &>/dev/null
-}
-
-_snap_remove() {
-    local pkg="$1"
-    _log "INFO" "snap remove ${pkg} -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "snap remove ${pkg}"
-        return 0
-    fi
-    if _as_root snap remove "$pkg" 2>&1 | tail -3; then
-        _ok "تم حذف ${pkg} (snap)"
-        _log "INFO" "snap remove ${pkg} -- نجح"
-        return 0
-    else
-        _err "فشل حذف ${pkg} (snap)"
-        _log "ERROR" "snap remove ${pkg} -- فشل"
+check_bash_version() {
+    if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
+        msg_fail "يتطلب Bash 4.4 أو أحدث — الإصدار الحالي: ${BASH_VERSION}"
         return 1
     fi
+    return 0
 }
 
-_snap_old_revisions_count() {
-    snap list --all 2>/dev/null | awk '/disabled/' | wc -l || echo "0"
-}
-
-_snap_clean_old() {
-    _log "INFO" "snap clean old -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "snap remove (old disabled revisions)"
+check_connectivity() {
+    local hosts=("archive.ubuntu.com" "security.ubuntu.com" "1.1.1.1")
+    for host in "${hosts[@]}"; do
+        if ping -c1 -W "${CONNECTIVITY_TIMEOUT}" "${host}" &>/dev/null; then
+            msg_ok "اتصال الإنترنت متاح"
+            log_info "فحص الاتصال نجح عبر ${host}"
+            return 0
+        fi
+    done
+    # محاولة أخيرة عبر curl
+    if curl -sf --max-time "${CONNECTIVITY_TIMEOUT}" "https://archive.ubuntu.com" &>/dev/null; then
+        msg_ok "اتصال الإنترنت متاح (عبر HTTPS)"
         return 0
     fi
-    snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}' | while read -r sname srev; do
-        _as_root snap remove "$sname" --revision="$srev" 2>/dev/null || true
-    done
-    _ok "تم حذف نسخ Snap القديمة"
-    _log "INFO" "snap clean old -- نجح"
-}
-
-# ----------------------------------------------------------------------------
-#  SECTION 08: flatpak
-#  عمليات مدير الحزم flatpak
-# ----------------------------------------------------------------------------
-
-_flatpak_available() {
-    _has_cmd flatpak
-}
-
-_flatpak_update() {
-    _log "INFO" "flatpak update -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "flatpak update -y"
-        return 0
-    fi
-    if _as_root flatpak update -y --noninteractive 2>&1 | tail -3; then
-        _ok "تم تحديث حزم Flatpak"
-        _log "INFO" "flatpak update -- نجح"
-    else
-        _warn "فشل تحديث بعض حزم Flatpak"
-        _log "WARN" "flatpak update -- فشل جزئي"
-    fi
-}
-
-_flatpak_list_apps() {
-    flatpak list --app 2>/dev/null
-}
-
-_flatpak_is_installed() {
-    flatpak list --app 2>/dev/null | grep -qi "$1"
-}
-
-_flatpak_remove() {
-    local pkg="$1"
-    _log "INFO" "flatpak remove ${pkg} -- بدء"
-    if (( SAHEL_DRY_RUN )); then
-        _dry "flatpak uninstall -y ${pkg}"
-        return 0
-    fi
-    if _as_root flatpak uninstall -y "$pkg" 2>&1 | tail -3; then
-        _ok "تم حذف ${pkg} (flatpak)"
-        _log "INFO" "flatpak remove ${pkg} -- نجح"
-        return 0
-    else
-        _err "فشل حذف ${pkg} (flatpak)"
-        _log "ERROR" "flatpak remove ${pkg} -- فشل"
-        return 1
-    fi
-}
-
-# ----------------------------------------------------------------------------
-#  SECTION 09: system_info
-#  جمع وعرض معلومات النظام
-# ----------------------------------------------------------------------------
-
-_sysinfo_display() {
-    _header
-    _section "معلومات النظام"
-
-    echo ""
-
-    echo -e "  نظام التشغيل   : ${C_WHITE}${_OS_PRETTY:-غير معروف}${C_RESET}"
-    echo -e "  نواة النظام     : ${C_WHITE}$(uname -r)${C_RESET}"
-    echo -e "  المعمارية       : ${C_WHITE}$(uname -m)${C_RESET}"
-    echo -e "  اسم الجهاز     : ${C_WHITE}$(hostname)${C_RESET}"
-
-    local up
-    up=$(uptime -p 2>/dev/null | sed 's/up //' || echo "غير معروف")
-    echo -e "  وقت التشغيل    : ${C_WHITE}${up}${C_RESET}"
-
-    _line '-'
-    echo ""
-
-    local cpu
-    cpu=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | xargs || echo "غير معروف")
-    echo -e "  المعالج         : ${C_WHITE}${cpu}${C_RESET}"
-    echo -e "  عدد الانوية     : ${C_WHITE}$(nproc 2>/dev/null || echo '?')${C_RESET}"
-
-    if _has_cmd free; then
-        local mt mu mp
-        mt=$(free -h 2>/dev/null | awk '/^Mem:/{print $2}')
-        mu=$(free -h 2>/dev/null | awk '/^Mem:/{print $3}')
-        mp=$(free 2>/dev/null | awk '/^Mem:/{if($2>0) printf "%.0f", $3/$2*100; else print "0"}')
-        echo -e "  الذاكرة (RAM)   : ${C_WHITE}${mu} / ${mt} (${mp}%)${C_RESET}"
-
-        local st su
-        st=$(free -h 2>/dev/null | awk '/^Swap:/{print $2}')
-        su=$(free -h 2>/dev/null | awk '/^Swap:/{print $3}')
-        if [[ -n "$st" && "$st" != "0B" && "$st" != "0" ]]; then
-            echo -e "  ذاكرة التبديل   : ${C_WHITE}${su} / ${st}${C_RESET}"
-        fi
-    fi
-
-    _line '-'
-    echo ""
-
-    echo -e "  ${C_CYAN}الاقراص:${C_RESET}"
-    echo ""
-    df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
-        | grep -E '^(/dev|Filesystem)' \
-        | while IFS= read -r line; do
-        echo -e "    ${C_DIM}${line}${C_RESET}"
-    done
-
-    _line '-'
-    echo ""
-
-    local lip
-    lip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "غير معروف")
-    echo -e "  IP المحلي       : ${C_WHITE}${lip}${C_RESET}"
-
-    _line '-'
-    echo ""
-
-    echo -e "  ${C_CYAN}مدراء الحزم:${C_RESET}"
-    echo ""
-
-    if _has_cmd apt; then
-        local apt_c
-        apt_c=$(dpkg --get-selections 2>/dev/null | grep -c 'install' || echo "?")
-        echo -e "    ${C_GREEN}$(_icon ok)${C_RESET} apt  (${apt_c} حزمة)"
-    fi
-
-    if _snap_available; then
-        local snap_c
-        snap_c=$(snap list 2>/dev/null | tail -n+2 | wc -l || echo "?")
-        echo -e "    ${C_GREEN}$(_icon ok)${C_RESET} snap (${snap_c} حزمة)"
-    else
-        echo -e "    ${C_DIM}$(_icon fail) snap (غير مثبت)${C_RESET}"
-    fi
-
-    if _flatpak_available; then
-        local fp_c
-        fp_c=$(flatpak list --app 2>/dev/null | wc -l || echo "?")
-        echo -e "    ${C_GREEN}$(_icon ok)${C_RESET} flatpak (${fp_c} تطبيق)"
-    else
-        echo -e "    ${C_DIM}$(_icon fail) flatpak (غير مثبت)${C_RESET}"
-    fi
-
-    _pause
-}
-
-# ----------------------------------------------------------------------------
-#  SECTION 10: package_management
-#  الوحدات التفاعلية (تحديث، تنظيف، ادارة حزم)
-# ----------------------------------------------------------------------------
-
-# ========================================
-#  تحديث النظام الشامل
-# ========================================
-_mod_update() {
-    _header
-    _section "تحديث النظام الشامل"
-
-    _apt_update_list || { _pause; return; }
-
-    local count
-    count=$(_apt_upgradable_count)
-
-    if [[ "$count" -eq 0 ]]; then
-        _ok "النظام محدث -- لا توجد حزم تحتاج تحديث"
-    else
-        _info "${count} حزمة تحتاج تحديث"
-        echo ""
-        _apt_show_upgradable 15
-        if (( count > 15 )); then
-            echo -e "    ${C_DIM}... و $((count - 15)) حزمة اخرى${C_RESET}"
-        fi
-
-        if _confirm "تحديث ${count} حزمة؟"; then
-            _apt_do_upgrade
-        else
-            _info "تم تخطي تحديث apt"
-        fi
-    fi
-
-    if _snap_available; then
-        echo ""
-        _snap_refresh
-    fi
-
-    if _flatpak_available; then
-        echo ""
-        _flatpak_update
-    fi
-
-    echo ""
-    _line '='
-    _ok "اكتمل التحديث الشامل"
-    _log "INFO" "التحديث الشامل -- اكتمل"
-    _pause
-}
-
-# ========================================
-#  تنظيف النظام
-# ========================================
-_mod_cleanup() {
-    _header
-    _section "تنظيف النظام"
-
-    local total_freed=0
-    local before after freed
-
-    # --- 1. حزم يتيمة ---
-    _info "فحص الحزم اليتيمة..."
-    local orphans
-    orphans=$(_apt_orphan_count)
-
-    if (( orphans > 0 )); then
-        _warn "${orphans} حزمة يتيمة"
-        if _confirm "حذف الحزم اليتيمة؟"; then
-            before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-            _apt_autoremove
-            after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-            freed=$(( after - before ))
-            (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-        fi
-    else
-        _ok "لا توجد حزم يتيمة"
-    fi
-
-    # --- 2. كاش apt ---
-    echo ""
-    _info "فحص كاش الحزم..."
-    local csz
-    csz=$(_apt_cache_size)
-
-    if (( csz > 1048576 )); then
-        _info "حجم الكاش: $(_human_size "$csz")"
-        if _confirm "تنظيف كاش apt؟"; then
-            before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-            _apt_clean_cache
-            after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-            freed=$(( after - before ))
-            (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-        fi
-    else
-        _ok "الكاش نظيف"
-    fi
-
-    # --- 3. سجلات journal ---
-    echo ""
-    _info "فحص سجلات النظام (journal)..."
-    if _has_cmd journalctl; then
-        local jsz
-        jsz=$(journalctl --disk-usage 2>/dev/null | grep -oP '[\d.]+[GMK]' | head -1 || echo "")
-        if [[ -n "$jsz" ]]; then
-            _info "حجم السجلات: ${jsz}"
-            if _confirm "حذف السجلات الاقدم من 7 ايام؟"; then
-                before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                if (( SAHEL_DRY_RUN )); then
-                    _dry "journalctl --vacuum-time=7d"
-                else
-                    _as_root journalctl --vacuum-time=7d --quiet 2>/dev/null
-                fi
-                after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                freed=$(( after - before ))
-                (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-                _ok "تم تنظيف السجلات القديمة"
-            fi
-        fi
-    else
-        _ok "journalctl غير متوفر -- تخطي"
-    fi
-
-    # --- 4. ملفات مؤقتة قديمة (للمستخدم الحالي فقط) ---
-    echo ""
-    _info "فحص الملفات المؤقتة..."
-    local real_user="${SUDO_USER:-$USER}"
-    local real_uid
-    real_uid=$(id -u "$real_user" 2>/dev/null || echo "")
-
-    if [[ -n "$real_uid" ]]; then
-        local tmp_c
-        # فقط ملفات المستخدم الحالي -- لا نمس ملفات تطبيقات اخرى
-        tmp_c=$(find /tmp -maxdepth 2 -type f -user "$real_uid" -atime +7 2>/dev/null | wc -l || echo "0")
-
-        if (( tmp_c > 0 )); then
-            _info "${tmp_c} ملف مؤقت للمستخدم ${real_user} اقدم من 7 ايام"
-            if _confirm "حذف الملفات المؤقتة القديمة؟"; then
-                before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                if (( SAHEL_DRY_RUN )); then
-                    _dry "find /tmp -maxdepth 2 -type f -user ${real_uid} -atime +7 -delete"
-                else
-                    find /tmp -maxdepth 2 -type f -user "$real_uid" -atime +7 -delete 2>/dev/null || true
-                fi
-                after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                freed=$(( after - before ))
-                (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-                _ok "تم حذف الملفات المؤقتة"
-            fi
-        else
-            _ok "لا توجد ملفات مؤقتة قديمة"
-        fi
-    else
-        _ok "تعذر تحديد المستخدم -- تخطي /tmp"
-    fi
-
-    # --- 5. thumbnails ---
-    echo ""
-    local thumb_dir="/home/${real_user}/.cache/thumbnails"
-    if [[ -d "$thumb_dir" ]]; then
-        local tsz
-        tsz=$(du -sb "$thumb_dir" 2>/dev/null | awk '{print $1}' || echo "0")
-        if (( tsz > 5242880 )); then
-            _info "حجم الصور المصغرة: $(_human_size "$tsz")"
-            if _confirm "حذف كاش الصور المصغرة؟"; then
-                before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                if (( SAHEL_DRY_RUN )); then
-                    _dry "rm -rf ${thumb_dir}/*"
-                else
-                    rm -rf "${thumb_dir:?}"/* 2>/dev/null || true
-                fi
-                after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                freed=$(( after - before ))
-                (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-                _ok "تم حذف الصور المصغرة"
-            fi
-        else
-            _ok "كاش الصور المصغرة صغير"
-        fi
-    fi
-
-    # --- 6. snap قديمة ---
-    if _snap_available; then
-        echo ""
-        _info "فحص نسخ Snap القديمة..."
-        local old_snaps
-        old_snaps=$(_snap_old_revisions_count)
-        if (( old_snaps > 0 )); then
-            _info "${old_snaps} نسخة Snap قديمة"
-            if _confirm "حذف نسخ Snap القديمة؟"; then
-                before=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                _snap_clean_old
-                after=$(df / --output=avail -B1 2>/dev/null | tail -1 | tr -d ' ')
-                freed=$(( after - before ))
-                (( freed > 0 )) && total_freed=$(( total_freed + freed ))
-            fi
-        else
-            _ok "لا توجد نسخ Snap قديمة"
-        fi
-    fi
-
-    # --- الملخص ---
-    echo ""
-    _line '='
-    if (( total_freed > 0 )); then
-        _ok "المساحة المسترجعة: $(_human_size "$total_freed")"
-    else
-        _ok "التنظيف اكتمل"
-    fi
-    _log "INFO" "تنظيف النظام -- اكتمل (${total_freed} bytes)"
-    _pause
-}
-
-# ========================================
-#  ادارة البرامج المثبتة
-# ========================================
-_mod_packages() {
-    while true; do
-        _header
-        _section "ادارة البرامج المثبتة"
-
-        echo ""
-        echo -e "  ${C_WHITE}1${C_RESET} -- عرض برامج apt (المثبتة يدويا)"
-        echo -e "  ${C_WHITE}2${C_RESET} -- عرض برامج Snap"
-        echo -e "  ${C_WHITE}3${C_RESET} -- عرض برامج Flatpak"
-        echo -e "  ${C_WHITE}4${C_RESET} -- البحث في البرامج المثبتة"
-        echo -e "  ${C_WHITE}5${C_RESET} -- حذف برنامج"
-        echo ""
-        echo -e "  ${C_WHITE}0${C_RESET} -- رجوع"
-        echo ""
-        echo -ne "  الاختيار: "
-        read -r c
-
-        case "$c" in
-            1) _pkg_list_apt ;;
-            2) _pkg_list_snap ;;
-            3) _pkg_list_flatpak ;;
-            4) _pkg_search ;;
-            5) _pkg_remove ;;
-            0) return ;;
-            *) _warn "اختيار غير صحيح"; sleep 1 ;;
-        esac
-    done
-}
-
-_pkg_list_apt() {
-    local packages
-    packages=$(_apt_list_manual)
-    local total
-    total=$(echo "$packages" | grep -c . || echo "0")
-
-    # حالة حافة: لا توجد حزم يدوية
-    if (( total == 0 )); then
-        _header
-        _section "البرامج المثبتة يدويا (apt)"
-        _info "لا توجد حزم مثبتة يدويا"
-        _pause
-        return
-    fi
-
-    local page_size=25 page=1
-    local total_pages=$(( (total + page_size - 1) / page_size ))
-
-    while true; do
-        _header
-        _section "البرامج المثبتة يدويا (apt)"
-        _info "الاجمالي: ${total} -- صفحة ${page}/${total_pages}"
-        echo ""
-
-        local start=$(( (page - 1) * page_size + 1 ))
-        local end=$(( page * page_size ))
-
-        echo "$packages" | sed -n "${start},${end}p" | nl -ba -s'  ' -w3 -v "$start" | while IFS= read -r line; do
-            echo -e "    ${C_DIM}${line}${C_RESET}"
-        done
-
-        echo ""
-        echo -e "  ${C_DIM}[n] التالي  [p] السابق  [0] رجوع${C_RESET}"
-        echo -ne "  : "
-        read -r nav
-
-        case "$nav" in
-            [نtn]) (( page < total_pages )) && (( page++ )) ;;
-            [سpb]) (( page > 1 )) && (( page-- )) ;;
-            0|q) return ;;
-        esac
-    done
-}
-
-_pkg_list_snap() {
-    _header
-    _section "البرامج المثبتة (Snap)"
-
-    if ! _snap_available; then
-        _info "Snap غير مثبت"
-        _pause
-        return
-    fi
-
-    echo ""
-    _snap_list | while IFS= read -r line; do
-        echo -e "    ${C_DIM}${line}${C_RESET}"
-    done
-    _pause
-}
-
-_pkg_list_flatpak() {
-    _header
-    _section "البرامج المثبتة (Flatpak)"
-
-    if ! _flatpak_available; then
-        _info "Flatpak غير مثبت"
-        _pause
-        return
-    fi
-
-    echo ""
-    _flatpak_list_apps | while IFS= read -r line; do
-        echo -e "    ${C_DIM}${line}${C_RESET}"
-    done
-    _pause
-}
-
-_pkg_search() {
-    _header
-    _section "البحث في البرامج المثبتة"
-
-    echo ""
-    echo -ne "  اسم البرنامج (او جزء منه): "
-    read -r term
-
-    if [[ -z "$term" ]]; then
-        _warn "لم يتم ادخال اسم"
-        _pause
-        return
-    fi
-
-    # تعقيم المدخل من الحروف الخطيرة
-    term="${term//[^a-zA-Z0-9._-]/}"
-    if [[ -z "$term" ]]; then
-        _warn "مدخل غير صالح"
-        _pause
-        return
-    fi
-
-    echo ""
-    _info "نتائج البحث: ${term}"
-    echo ""
-
-    local apt_r
-    apt_r=$(dpkg -l 2>/dev/null | grep -i "$term" | grep '^ii' | awk '{printf "%-30s %s\n", $2, $3}')
-    if [[ -n "$apt_r" ]]; then
-        echo -e "  ${C_CYAN}-- apt --${C_RESET}"
-        echo "$apt_r" | head -15 | while IFS= read -r l; do echo "    $l"; done
-        echo ""
-    fi
-
-    if _snap_available; then
-        local snap_r
-        snap_r=$(snap list 2>/dev/null | grep -i "$term" || true)
-        if [[ -n "$snap_r" ]]; then
-            echo -e "  ${C_CYAN}-- snap --${C_RESET}"
-            echo "$snap_r" | while IFS= read -r l; do echo "    $l"; done
-            echo ""
-        fi
-    fi
-
-    if _flatpak_available; then
-        local fp_r
-        fp_r=$(flatpak list --app 2>/dev/null | grep -i "$term" || true)
-        if [[ -n "$fp_r" ]]; then
-            echo -e "  ${C_CYAN}-- flatpak --${C_RESET}"
-            echo "$fp_r" | while IFS= read -r l; do echo "    $l"; done
-        fi
-    fi
-
-    _pause
-}
-
-_pkg_remove() {
-    _header
-    _section "حذف برنامج"
-
-    echo ""
-    echo -ne "  الاسم الدقيق للبرنامج: "
-    read -r pkg
-
-    if [[ -z "$pkg" ]]; then
-        _warn "لم يتم ادخال اسم"
-        _pause
-        return
-    fi
-
-    # --- 0. تحقق من صلاحية الاسم ---
-    _validate_pkg_name "$pkg" || { _pause; return; }
-
-    # --- 1. فحص الحماية ---
-    if _is_protected "$pkg"; then
-        echo ""
-        _err "هذه الحزمة محمية -- حذفها يدمر النظام"
-        _err "الحزمة: ${pkg}"
-        _log "WARN" "محاولة حذف حزمة محمية: ${pkg} -- مرفوض"
-        _pause
-        return
-    fi
-
-    # --- 2. اين الحزمة مثبتة؟ ---
-    local found_apt=0 found_snap=0 found_fp=0
-
-    _apt_is_installed "$pkg" && found_apt=1
-    _snap_available && _snap_is_installed "$pkg" && found_snap=1
-    _flatpak_available && _flatpak_is_installed "$pkg" && found_fp=1
-
-    if (( found_apt + found_snap + found_fp == 0 )); then
-        _err "البرنامج '${pkg}' غير مثبت"
-        _info "استخدم خيار البحث [4] للتأكد من الاسم"
-        _pause
-        return
-    fi
-
-    local sources=""
-    (( found_apt ))  && sources="${sources}apt "
-    (( found_snap )) && sources="${sources}snap "
-    (( found_fp ))   && sources="${sources}flatpak "
-    _info "مصدر التثبيت: ${C_WHITE}${sources}${C_RESET}"
-
-    # --- 3. تأثير الحذف (apt) ---
-    local do_purge=0
-    if (( found_apt )); then
-        echo ""
-        echo -e "  ${C_YELLOW}الحزم التي ستتأثر:${C_RESET}"
-
-        local impact blocked=0
-        if ! impact=$(_apt_removal_impact "$pkg"); then
-            _err "تعذر حساب التأثير"
-            _pause
-            return
-        fi
-
-        while IFS= read -r affected; do
-            [[ -z "$affected" ]] && continue
-            if _is_protected "$affected"; then
-                echo -e "    ${C_RED}$(_icon fail) ${affected} [محمية -- يتم الالغاء]${C_RESET}"
-                blocked=1
-            else
-                echo -e "    ${C_DIM}- ${affected}${C_RESET}"
-            fi
-        done <<< "$impact"
-
-        if (( blocked )); then
-            echo ""
-            _err "الحذف يمس حزمة اساسية محمية -- تم الالغاء تلقائيا"
-            _log "WARN" "حذف ${pkg} يمس حزمة محمية -- ملغي"
-            _pause
-            return
-        fi
-
-        # سؤال عن purge
-        echo ""
-        echo -e "  ${C_CYAN}نوع الحذف:${C_RESET}"
-        echo -e "    ${C_WHITE}1${C_RESET} -- حذف عادي (remove) -- يبقي ملفات الاعدادات"
-        echo -e "    ${C_WHITE}2${C_RESET} -- حذف كامل (purge)  -- يحذف كل شي"
-        echo -ne "  الاختيار [1]: "
-        read -r ptype
-        [[ "$ptype" == "2" ]] && do_purge=1
-    fi
-
-    # --- 4. تأكيد مزدوج ---
-    local purge_note=""
-    (( do_purge )) && purge_note=" (مع ملفات الاعدادات)"
-    if ! _confirm_danger "سيتم حذف '${pkg}'${purge_note} نهائيا. هذا الاجراء قد لا يمكن التراجع عنه."; then
-        _info "تم الالغاء"
-        _pause
-        return
-    fi
-
-    # --- 5. تنفيذ ---
-    (( found_apt ))  && _apt_remove "$pkg" "$do_purge"
-    (( found_snap )) && _snap_remove "$pkg"
-    (( found_fp ))   && _flatpak_remove "$pkg"
-
-    _pause
-}
-
-# ========================================
-#  تثبيت برامج جديدة
-# ========================================
-_mod_install() {
-    while true; do
-        _header
-        _section "تثبيت برامج جديدة"
-
-        echo ""
-        echo -e "  ${C_WHITE}1${C_RESET} -- البحث والتثبيت عبر apt"
-        echo -e "  ${C_WHITE}2${C_RESET} -- البحث والتثبيت عبر Snap"
-        echo -e "  ${C_WHITE}3${C_RESET} -- برامج شائعة (قائمة جاهزة)"
-        echo ""
-        echo -e "  ${C_WHITE}0${C_RESET} -- رجوع"
-        echo ""
-        echo -ne "  الاختيار: "
-        read -r c
-
-        case "$c" in
-            1) _install_from_apt ;;
-            2) _install_from_snap ;;
-            3) _install_popular ;;
-            0) return ;;
-            *) _warn "اختيار غير صحيح"; sleep 1 ;;
-        esac
-    done
-}
-
-_install_from_apt() {
-    _header
-    _section "البحث في مستودعات apt"
-
-    echo ""
-    echo -ne "  اسم البرنامج: "
-    read -r term
-
-    [[ -z "$term" ]] && { _warn "لم يتم ادخال اسم"; _pause; return; }
-
-    # تعقيم المدخل
-    term="${term//[^a-zA-Z0-9._-]/}"
-    [[ -z "$term" ]] && { _warn "مدخل غير صالح"; _pause; return; }
-
-    _info "جاري البحث..."
-    echo ""
-
-    local results
-    results=$(_apt_search "$term")
-
-    if [[ -z "$results" ]]; then
-        _err "لا توجد نتائج: ${term}"
-        _pause
-        return
-    fi
-
-    local i=1
-    while IFS= read -r line; do
-        local name desc
-        name=$(echo "$line" | awk '{print $1}')
-        desc=$(echo "$line" | cut -d' ' -f3-)
-        printf "  ${C_WHITE}%2d${C_RESET}  %-28s ${C_DIM}%s${C_RESET}\n" "$i" "$name" "${desc:0:38}"
-        (( i++ ))
-    done <<< "$results"
-
-    echo ""
-    echo -ne "  رقم البرنامج (0 = رجوع): "
-    read -r sel
-
-    [[ "$sel" == "0" || -z "$sel" ]] && return
-    _is_int "$sel" || { _warn "رقم غير صحيح"; _pause; return; }
-
-    local chosen
-    chosen=$(echo "$results" | sed -n "${sel}p" | awk '{print $1}')
-    [[ -z "$chosen" ]] && { _warn "خارج النطاق"; _pause; return; }
-
-    echo ""
-    _info "تفاصيل: ${chosen}"
-    _apt_show_pkg "$chosen" | while IFS= read -r l; do
-        echo -e "    ${C_DIM}${l}${C_RESET}"
-    done
-
-    if _confirm "تثبيت ${chosen}؟"; then
-        _apt_install "$chosen"
-    fi
-    _pause
-}
-
-_install_from_snap() {
-    _header
-    _section "البحث في متجر Snap"
-
-    if ! _snap_available; then
-        _info "Snap غير مثبت"
-        if _confirm "تثبيت snapd؟"; then
-            _apt_install "snapd"
-        fi
-        _pause
-        return
-    fi
-
-    echo ""
-    echo -ne "  اسم البرنامج: "
-    read -r term
-
-    [[ -z "$term" ]] && { _warn "لم يتم ادخال اسم"; _pause; return; }
-
-    # تعقيم المدخل
-    term="${term//[^a-zA-Z0-9._-]/}"
-    [[ -z "$term" ]] && { _warn "مدخل غير صالح"; _pause; return; }
-
-    _info "جاري البحث..."
-    echo ""
-
-    snap find "$term" 2>/dev/null | head -12 | while IFS= read -r l; do
-        echo -e "    ${C_DIM}${l}${C_RESET}"
-    done
-
-    echo ""
-    echo -ne "  اسم البرنامج الدقيق للتثبيت (0 = رجوع): "
-    read -r pkg
-
-    [[ "$pkg" == "0" || -z "$pkg" ]] && return
-
-    if _confirm "تثبيت '${pkg}' عبر Snap؟"; then
-        _log "INFO" "snap install ${pkg}"
-        if (( SAHEL_DRY_RUN )); then
-            _dry "snap install ${pkg}"
-        elif _as_root snap install "$pkg" 2>&1 | tail -3; then
-            _ok "تم تثبيت ${pkg}"
-            _log "INFO" "snap install ${pkg} -- نجح"
-        else
-            _err "فشل تثبيت ${pkg}"
-            _log "ERROR" "snap install ${pkg} -- فشل"
-        fi
-    fi
-    _pause
-}
-
-# --- تحميل البرامج الشائعة من ملف خارجي او القيم الافتراضية ---
-_load_popular_categories() {
-    # لو فيه ملف اعدادات خارجي نقرأ منه
-    if [[ -f "$SAHEL_POPULAR_CONF" ]]; then
-        _log "INFO" "تحميل قائمة البرامج الشائعة من ${SAHEL_POPULAR_CONF}"
-        return 0
-    fi
+    msg_fail "لا يوجد اتصال بالإنترنت — لا يمكن متابعة التحديث"
     return 1
 }
 
-_install_popular() {
-    _header
-    _section "برامج شائعة"
-
-    echo ""
-    echo -e "  ${C_WHITE}1${C_RESET} -- متصفحات"
-    echo -e "  ${C_WHITE}2${C_RESET} -- برامج مكتبية"
-    echo -e "  ${C_WHITE}3${C_RESET} -- مشغلات وسائط"
-    echo -e "  ${C_WHITE}4${C_RESET} -- ادوات تطوير"
-    echo -e "  ${C_WHITE}5${C_RESET} -- ادوات نظام"
-    echo ""
-    echo -e "  ${C_WHITE}0${C_RESET} -- رجوع"
-    echo ""
-    echo -ne "  الاختيار: "
-    read -r cat
-
-    local -a names=() descs=()
-
-    # محاولة تحميل القوائم من ملف خارجي
-    # الصيغة في popular.conf:
-    #   [browsers]
-    #   firefox=Firefox -- متصفح مفتوح المصدر
-    #   chromium-browser=Chromium -- متصفح مفتوح المصدر
-    if _load_popular_categories; then
-        local section_name=""
-        case "$cat" in
-            1) section_name="browsers"   ;;
-            2) section_name="office"     ;;
-            3) section_name="media"      ;;
-            4) section_name="dev"        ;;
-            5) section_name="systools"   ;;
-            0) return ;;
-            *) _warn "اختيار غير صحيح"; _pause; return ;;
-        esac
-
-        local in_section=0
-        while IFS= read -r line; do
-            # تخطي التعليقات والسطور الفارغة
-            [[ -z "$line" || "$line" =~ ^# ]] && continue
-            if [[ "$line" =~ ^\[(.+)\]$ ]]; then
-                [[ "${BASH_REMATCH[1]}" == "$section_name" ]] && in_section=1 || in_section=0
-                continue
-            fi
-            if (( in_section )); then
-                local pname="${line%%=*}"
-                local pdesc="${line#*=}"
-                names+=("$pname")
-                descs+=("$pdesc")
-            fi
-        done < "$SAHEL_POPULAR_CONF"
+check_disk_space() {
+    local avail_kb
+    avail_kb=$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')
+    if [[ -z "${avail_kb}" ]]; then
+        msg_warn "تعذر قراءة معلومات المساحة"
+        return 0
     fi
-
-    # لو القوائم فاضية (ما فيه ملف او القسم فاضي) -- استخدم الافتراضي
-    if (( ${#names[@]} == 0 )); then
-        case "$cat" in
-            1)
-                names=("firefox" "chromium-browser")
-                descs=("Firefox -- متصفح مفتوح المصدر" "Chromium -- متصفح مفتوح المصدر")
-                ;;
-            2)
-                names=("libreoffice" "thunderbird" "evince")
-                descs=("LibreOffice -- بديل مايكروسوفت اوفيس" "Thunderbird -- بريد الكتروني" "Evince -- عارض PDF")
-                ;;
-            3)
-                names=("vlc" "mpv" "audacity")
-                descs=("VLC -- مشغل فيديو شامل" "mpv -- مشغل خفيف" "Audacity -- محرر صوت")
-                ;;
-            4)
-                names=("git" "curl" "build-essential" "python3-pip")
-                descs=("Git -- ادارة اكواد" "cURL -- نقل بيانات" "GCC/make -- ادوات بناء" "pip -- مدير حزم بايثون")
-                ;;
-            5)
-                names=("htop" "neofetch" "net-tools" "tree" "ncdu")
-                descs=("htop -- مراقب موارد" "neofetch -- معلومات نظام" "net-tools -- ادوات شبكة" "tree -- عرض مجلدات" "ncdu -- تحليل قرص")
-                ;;
-            0) return ;;
-            *) _warn "اختيار غير صحيح"; _pause; return ;;
-        esac
+    local avail_mb=$(( avail_kb / 1024 ))
+    if (( avail_mb < MIN_DISK_MB )); then
+        msg_fail "المساحة المتاحة (${avail_mb} MB) أقل من الحد الأدنى (${MIN_DISK_MB} MB)"
+        return 1
     fi
+    msg_ok "المساحة المتاحة: ${avail_mb} MB"
+    return 0
+}
 
-    echo ""
-    for i in "${!names[@]}"; do
-        local st
-        if _apt_is_installed "${names[$i]}"; then
-            st="${C_GREEN}[مثبت]${C_RESET}"
-        else
-            st="${C_DIM}[غير مثبت]${C_RESET}"
+check_apt_lock() {
+    local lock_files=(
+        /var/lib/dpkg/lock-frontend
+        /var/lib/dpkg/lock
+        /var/lib/apt/lists/lock
+        /var/cache/apt/archives/lock
+    )
+    local waited=0
+    while (( waited < LOCK_WAIT_SEC )); do
+        local locked=false
+        for lf in "${lock_files[@]}"; do
+            if [[ -f "${lf}" ]] && fuser "${lf}" &>/dev/null; then
+                locked=true
+                break
+            fi
+        done
+        if [[ "${locked}" == false ]]; then
+            msg_ok "لا يوجد قفل على apt/dpkg"
+            return 0
         fi
-        printf "  ${C_WHITE}%d${C_RESET}  %-40s %b\n" "$((i+1))" "${descs[$i]}" "$st"
+        if (( waited == 0 )); then
+            msg_warn "يوجد قفل على apt/dpkg — بانتظار تحرّره (حتى ${LOCK_WAIT_SEC} ثانية)..."
+        fi
+        sleep 5
+        (( waited += 5 )) || true
     done
+    msg_fail "لم يتحرر قفل apt/dpkg خلال ${LOCK_WAIT_SEC} ثانية"
+    return 1
+}
+
+# إصلاح أي حالة dpkg مكسورة قبل البدء
+try_fix_dpkg() {
+    if ! dpkg --audit &>/dev/null; then
+        msg_warn "اكتُشفت حالة dpkg غير مكتملة — محاولة إصلاح..."
+        log_cmd "dpkg --configure -a"
+        if dpkg --configure -a >> "${LOG_FILE}" 2>&1; then
+            msg_ok "تم إصلاح dpkg"
+        else
+            msg_fail "فشل إصلاح dpkg — قد يحتاج تدخلاً يدويًا"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# run_preflight يقبل معامل اختياري --skip-connectivity لتخطي فحص الاتصال
+run_preflight() {
+    local skip_connectivity=false
+    if [[ "${1:-}" == "--skip-connectivity" ]]; then
+        skip_connectivity=true
+    fi
+
+    print_header_box "فحوصات ما قبل التشغيل"
+
+    if ! check_bash_version; then
+        return 1
+    fi
+
+    if ! check_ubuntu; then
+        return 1
+    fi
+
+    if ! check_disk_space; then
+        log_error "فحص المساحة فشل"
+        return 1
+    fi
+
+    if [[ "${skip_connectivity}" == false ]]; then
+        if ! check_connectivity; then
+            log_error "لا يوجد اتصال"
+            return 1
+        fi
+    else
+        msg_info "تم تخطي فحص الاتصال (غير مطلوب لهذه العملية)"
+    fi
+
+    if ! check_apt_lock; then
+        log_error "قفل apt لم يتحرر"
+        return 1
+    fi
+
+    if ! try_fix_dpkg; then
+        log_error "dpkg مكسور"
+        return 1
+    fi
 
     echo ""
-    echo -ne "  رقم البرنامج (0 = رجوع): "
-    read -r sel
-
-    [[ "$sel" == "0" || -z "$sel" ]] && return
-    _is_int "$sel" || { _warn "رقم غير صحيح"; _pause; return; }
-
-    local idx=$((sel - 1))
-    if (( idx < 0 || idx >= ${#names[@]} )); then
-        _warn "خارج النطاق"
-        _pause
-        return
-    fi
-
-    local pkg="${names[$idx]}"
-
-    if _apt_is_installed "$pkg"; then
-        _info "${pkg} مثبت مسبقا"
-        _pause
-        return
-    fi
-
-    if _confirm "تثبيت ${pkg}؟"; then
-        _apt_install "$pkg"
-    fi
-    _pause
+    msg_ok "جميع الفحوصات ناجحة — يمكن المتابعة"
+    start_sudo_keepalive
+    return 0
 }
 
-# ----------------------------------------------------------------------------
-#  SECTION 11: self_update
-#  تحديث الاداة ذاتيا
-# ----------------------------------------------------------------------------
-
-_mod_self_update() {
-    _header
-    _section "تحديث ${SAHEL_NAME_AR}"
-
-    if ! _has_cmd curl && ! _has_cmd wget; then
-        _err "يحتاج curl او wget -- ثبت واحد منهم اولا"
-        _pause
-        return
+# ─────────────────────────────────────────────────────────────────────────────
+# تنفيذ أمر مع تسجيل وإدارة حالة
+# ─────────────────────────────────────────────────────────────────────────────
+run_logged() {
+    local desc="$1"; shift
+    log_cmd "$*"
+    local output rc=0
+    output=$("$@" 2>&1) || rc=$?
+    if [[ -n "${output}" ]]; then
+        echo "${output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
     fi
-
-    local script_path
-    script_path="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-
-    if [[ ! -w "$script_path" ]]; then
-        _err "لا يمكن الكتابة على: ${script_path}"
-        _info "جرب التشغيل بصلاحيات sudo"
-        _pause
-        return
-    fi
-
-    local raw_url="${SAHEL_REPO}/raw/main/sahel"
-    _info "التحقق من التحديثات..."
-    _info "المصدر: ${raw_url}"
-
-    local tmp_file
-    tmp_file=$(mktemp /tmp/sahel-update.XXXXXX) || { _err "تعذر انشاء ملف مؤقت"; _pause; return; }
-
-    # تنظيف الملف المؤقت عند الخروج من الدالة
-    trap 'rm -f "$tmp_file"' RETURN
-
-    local dl_ok=0
-    if _has_cmd curl; then
-        curl -fsSL --max-time 30 "$raw_url" -o "$tmp_file" 2>/dev/null && dl_ok=1
-    elif _has_cmd wget; then
-        wget -q --timeout=30 "$raw_url" -O "$tmp_file" 2>/dev/null && dl_ok=1
-    fi
-
-    if (( ! dl_ok )) || [[ ! -s "$tmp_file" ]]; then
-        _err "فشل تحميل التحديث"
-        _info "تأكد من الاتصال بالانترنت والرابط: ${raw_url}"
-        _pause
-        return
-    fi
-
-    # استخراج الاصدار من الملف المحمل
-    local remote_ver
-    remote_ver=$(grep -m1 '^SAHEL_VERSION=' "$tmp_file" | cut -d'"' -f2 || echo "")
-
-    if [[ -z "$remote_ver" ]]; then
-        _err "الملف المحمل لا يبدو ملف sahel صالح"
-        _pause
-        return
-    fi
-
-    if [[ "$remote_ver" == "$SAHEL_VERSION" ]]; then
-        _ok "انت على اخر اصدار: v${SAHEL_VERSION}"
-        _pause
-        return
-    fi
-
-    _info "الاصدار الحالي : v${SAHEL_VERSION}"
-    _info "الاصدار الجديد : v${remote_ver}"
-
-    if ! _confirm "تحديث الى v${remote_ver}؟"; then
-        _info "تم الالغاء"
-        _pause
-        return
-    fi
-
-    if (( SAHEL_DRY_RUN )); then
-        _dry "cp ${tmp_file} ${script_path}"
-        _pause
-        return
-    fi
-
-    # نسخة احتياطية
-    cp "$script_path" "${script_path}.bak" 2>/dev/null || true
-
-    # استبدال
-    if cp "$tmp_file" "$script_path" && chmod +x "$script_path"; then
-        _ok "تم التحديث الى v${remote_ver}"
-        _info "نسخة احتياطية: ${script_path}.bak"
-        _log "INFO" "self-update: ${SAHEL_VERSION} -> ${remote_ver}"
-        _info "اعد تشغيل الاداة لتطبيق التحديث"
+    if (( rc == 0 )); then
+        msg_ok "${desc}"
+        (( COUNT_SUCCESS++ )) || true
+        SUMMARY_LINES+=("${SYM_OK} ${desc}")
     else
-        _err "فشل نسخ الملف -- استعادة النسخة الاحتياطية"
-        cp "${script_path}.bak" "$script_path" 2>/dev/null || true
+        msg_fail "${desc} (كود: ${rc})"
+        (( COUNT_FAILED++ )) || true
+        SUMMARY_LINES+=("${SYM_FAIL} ${desc} — كود: ${rc}")
+        ERROR_LINES+=("${desc} — كود الخروج: ${rc}")
+    fi
+    return "${rc}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# عمليات apt
+# ─────────────────────────────────────────────────────────────────────────────
+do_apt_update() {
+    msg_step "تحديث قائمة الحزم (apt-get update)"
+    start_spinner "جارٍ تحديث القوائم..."
+    local output rc=0
+    log_cmd "apt-get update"
+    output=$(apt-get update 2>&1) || rc=$?
+    stop_spinner
+    echo "${output}" | head -100 >> "${LOG_FILE}" 2>/dev/null || true
+    if (( rc == 0 )); then
+        msg_ok "تم تحديث قائمة الحزم"
+        (( COUNT_SUCCESS++ )) || true
+    else
+        msg_fail "فشل تحديث القائمة (كود: ${rc})"
+        (( COUNT_FAILED++ )) || true
+        APT_STATUS="فشل التحديث"
+        return "${rc}"
+    fi
+    return 0
+}
+
+do_apt_upgrade() {
+    msg_step "ترقية الحزم (apt-get upgrade)"
+    local sim_output
+    sim_output=$(apt-get --simulate upgrade 2>&1) || true
+    local upgradable
+    upgradable=$(echo "${sim_output}" | grep -c "^Inst " || true)
+    if (( upgradable == 0 )); then
+        msg_ok "لا توجد حزم تحتاج ترقية"
+        APT_STATUS="لا يوجد تحديثات"
+        (( COUNT_SUCCESS++ )) || true
+        SUMMARY_LINES+=("${SYM_OK} لا توجد حزم للترقية")
+        return 0
+    fi
+    msg_info "عدد الحزم المرشحة للترقية: ${upgradable}"
+    start_spinner "جارٍ ترقية الحزم..."
+    local rc=0
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        >> "${LOG_FILE}" 2>&1 || rc=$?
+    stop_spinner
+    if (( rc == 0 )); then
+        msg_ok "تمت ترقية ${upgradable} حزمة بنجاح"
+        APT_STATUS="نجاح (${upgradable} حزمة)"
+        (( COUNT_SUCCESS++ )) || true
+        SUMMARY_LINES+=("${SYM_OK} ترقية apt: ${upgradable} حزمة")
+    else
+        msg_fail "فشل في ترقية بعض الحزم (كود: ${rc})"
+        APT_STATUS="فشل جزئي"
+        (( COUNT_FAILED++ )) || true
+        SUMMARY_LINES+=("${SYM_FAIL} ترقية apt فشلت جزئيًا")
+    fi
+    return "${rc}"
+}
+
+do_apt_full_upgrade() {
+    msg_step "ترقية كاملة (apt-get dist-upgrade) — وضع متقدم"
+    local sim_output
+    sim_output=$(apt-get --simulate dist-upgrade 2>&1) || true
+    local to_remove to_install
+    to_remove=$(echo "${sim_output}" | grep -c "^Remv " || true)
+    to_install=$(echo "${sim_output}" | grep -c "^Inst " || true)
+
+    msg_info "ستُثبَّت: ${to_install} — ستُزال: ${to_remove}"
+
+    if (( to_remove > 0 )); then
+        msg_warn "ستتم إزالة ${to_remove} حزمة — تأكد من مراجعة القائمة"
+        echo "${sim_output}" | grep "^Remv " | head -20
+        printf "\n"
     fi
 
-    _pause
+    start_spinner "جارٍ تنفيذ الترقية الكاملة..."
+    local rc=0
+    DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        >> "${LOG_FILE}" 2>&1 || rc=$?
+    stop_spinner
+
+    if (( rc == 0 )); then
+        msg_ok "اكتملت الترقية الكاملة"
+        APT_STATUS="نجاح — ترقية كاملة"
+        (( COUNT_SUCCESS++ )) || true
+    else
+        msg_fail "فشل في الترقية الكاملة (كود: ${rc})"
+        APT_STATUS="فشل الترقية الكاملة"
+        (( COUNT_FAILED++ )) || true
+    fi
+    return "${rc}"
 }
 
-# ----------------------------------------------------------------------------
-#  SECTION 12: cli_args
-#  معالجة اوامر سطر الاوامر
-# ----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# عمليات snap
+# ─────────────────────────────────────────────────────────────────────────────
+do_snap_refresh() {
+    if ! command -v snap &>/dev/null; then
+        msg_info "snap غير مثبّت — تم التخطي"
+        SNAP_STATUS="غير مثبّت"
+        log_skip "snap غير مثبّت"
+        SUMMARY_LINES+=("${SYM_INFO} snap: غير مثبّت — تم التخطي")
+        return 0
+    fi
+    msg_step "تحديث حزم snap"
+    start_spinner "جارٍ تحديث snap..."
+    local output rc=0
+    log_cmd "snap refresh"
+    output=$(snap refresh 2>&1) || rc=$?
+    stop_spinner
+    echo "${output}" | head -50 >> "${LOG_FILE}" 2>/dev/null || true
 
-_cli_help() {
-    cat <<HELP
-
-  ${SAHEL_NAME_AR} (${SAHEL_NAME}) v${SAHEL_VERSION}
-  ${SAHEL_AUTHOR} -- ${SAHEL_SITE}
-
-  الاستخدام:
-    sahel                  الواجهة التفاعلية
-    sahel --update         تحديث سريع
-    sahel --clean          تنظيف سريع
-    sahel --info           معلومات النظام
-    sahel --self-update    تحديث الاداة نفسها
-    sahel --dry-run        وضع المحاكاة (لا ينفذ شي)
-    sahel --help           هذه المساعدة
-    sahel --version        رقم الاصدار
-
-  الاوضاع المركبة:
-    sahel --dry-run --update    محاكاة التحديث بدون تنفيذ
-    sahel --dry-run --clean     محاكاة التنظيف بدون تنفيذ
-
-  متغيرات البيئة:
-    SAHEL_FANCY=1          تفعيل رموز Unicode (للطرفيات الداعمة)
-
-  ملفات الاعدادات:
-    ${SAHEL_POPULAR_CONF}  قائمة البرامج الشائعة (اختياري)
-
-  ملف السجل:
-    ${SAHEL_LOG_FILE}
-
-HELP
+    if (( rc == 0 )); then
+        if echo "${output}" | grep -qi "All snaps up to date"; then
+            msg_ok "جميع حزم snap محدّثة"
+            SNAP_STATUS="لا يوجد تحديثات"
+        else
+            msg_ok "تم تحديث حزم snap"
+            SNAP_STATUS="نجاح"
+        fi
+        (( COUNT_SUCCESS++ )) || true
+    else
+        if echo "${output}" | grep -qi "has running apps\|pending\|snap changes"; then
+            msg_warn "بعض حزم snap لا يمكن تحديثها الآن (قيد الاستخدام أو معلّقة)"
+            SNAP_STATUS="تحديث جزئي"
+        else
+            msg_fail "فشل تحديث snap (كود: ${rc})"
+            SNAP_STATUS="فشل"
+            (( COUNT_FAILED++ )) || true
+        fi
+    fi
+    SUMMARY_LINES+=("${SYM_BULLET} snap: ${SNAP_STATUS}")
+    return 0
 }
 
-_cli_version() {
-    echo "${SAHEL_NAME_AR} (${SAHEL_NAME}) v${SAHEL_VERSION} -- ${SAHEL_AUTHOR} (${SAHEL_SITE})"
+# ─────────────────────────────────────────────────────────────────────────────
+# عمليات flatpak
+# ─────────────────────────────────────────────────────────────────────────────
+do_flatpak_update() {
+    if ! command -v flatpak &>/dev/null; then
+        msg_info "flatpak غير مثبّت — تم التخطي"
+        FLATPAK_STATUS="غير مثبّت"
+        log_skip "flatpak غير مثبّت"
+        SUMMARY_LINES+=("${SYM_INFO} flatpak: غير مثبّت — تم التخطي")
+        return 0
+    fi
+    msg_step "تحديث حزم flatpak"
+    start_spinner "جارٍ تحديث flatpak..."
+    local rc=0
+    log_cmd "flatpak update -y --noninteractive"
+    flatpak update -y --noninteractive >> "${LOG_FILE}" 2>&1 || rc=$?
+    stop_spinner
+
+    if (( rc == 0 )); then
+        msg_ok "تم تحديث flatpak"
+        FLATPAK_STATUS="نجاح"
+        (( COUNT_SUCCESS++ )) || true
+    else
+        msg_fail "فشل تحديث flatpak (كود: ${rc})"
+        FLATPAK_STATUS="فشل"
+        (( COUNT_FAILED++ )) || true
+    fi
+    SUMMARY_LINES+=("${SYM_BULLET} flatpak: ${FLATPAK_STATUS}")
+    return 0
 }
 
-# ----------------------------------------------------------------------------
-#  SECTION 13: main_menu
-#  القائمة الرئيسية والتشغيل
-# ----------------------------------------------------------------------------
-
-_main_menu() {
-    while true; do
-        _header
-
-        echo ""
-        echo -e "  ${C_BOLD}القائمة الرئيسية${C_RESET}"
-        echo ""
-        echo -e "  ${C_WHITE}1${C_RESET} -- تحديث النظام الشامل"
-        echo -e "  ${C_WHITE}2${C_RESET} -- تنظيف النظام"
-        echo -e "  ${C_WHITE}3${C_RESET} -- ادارة البرامج المثبتة"
-        echo -e "  ${C_WHITE}4${C_RESET} -- تثبيت برامج جديدة"
-        echo -e "  ${C_WHITE}5${C_RESET} -- معلومات النظام"
-        echo -e "  ${C_WHITE}6${C_RESET} -- تحديث ${SAHEL_NAME_AR}"
-        echo ""
-        _line '-'
-        echo -e "  ${C_WHITE}0${C_RESET} -- خروج"
-        echo ""
-        echo -ne "  الاختيار: "
-
-        read -r choice
-
-        case "$choice" in
-            1) _mod_update ;;
-            2) _mod_cleanup ;;
-            3) _mod_packages ;;
-            4) _mod_install ;;
-            5) _sysinfo_display ;;
-            6) _mod_self_update ;;
-            0)
-                echo ""
-                _ok "شكرا لاستخدامك ${SAHEL_NAME_AR}"
-                _info "${SAHEL_AUTHOR} -- ${SAHEL_SITE}"
-                _log "INFO" "خروج عادي"
-                echo ""
-                exit 0
-                ;;
-            *)
-                _warn "اختيار غير صحيح"
-                sleep 1
-                ;;
-        esac
-    done
+# ─────────────────────────────────────────────────────────────────────────────
+# التنظيف — محسّن مع عرض المساحة المستردة
+# ─────────────────────────────────────────────────────────────────────────────
+get_disk_free_mb() {
+    local avail_kb
+    avail_kb=$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')
+    echo $(( avail_kb / 1024 ))
 }
 
-# ============================================================================
-#  نقطة الدخول
-# ============================================================================
+do_cleanup() {
+    msg_step "تنظيف الحزم والمخابئ"
 
-main() {
-    # --- تهيئة الواجهة ---
-    _ui_init_colors
-    _ui_detect_icon_mode
-    _safety_check_locale
-    _safety_load_os_release
+    # قياس المساحة قبل التنظيف
+    local before_mb
+    before_mb=$(get_disk_free_mb)
 
-    # --- Trap ---
-    trap _trap_cleanup EXIT
-    trap _trap_interrupt INT TERM
+    local all_ok=true
 
-    # --- معالجة الخيارات ---
-    local action=""
+    # 1. إزالة الحزم غير المطلوبة
+    msg_info "إزالة الحزم غير المطلوبة (autoremove)..."
+    log_cmd "apt-get autoremove -y"
+    if apt-get autoremove -y >> "${LOG_FILE}" 2>&1; then
+        msg_ok "تم حذف الحزم غير المطلوبة"
+    else
+        msg_warn "فشل حذف بعض الحزم غير المطلوبة"
+        all_ok=false
+    fi
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --help|-h)
-                _cli_help
-                exit 0
-                ;;
-            --version|-v)
-                _cli_version
-                exit 0
-                ;;
-            --dry-run)
-                SAHEL_DRY_RUN=1
-                shift
-                ;;
-            --update)
-                action="update"
-                shift
-                ;;
-            --clean)
-                action="clean"
-                shift
-                ;;
-            --info)
-                action="info"
-                shift
-                ;;
-            --self-update)
-                action="self-update"
-                shift
-                ;;
-            *)
-                _err "خيار غير معروف: ${1}"
-                _cli_help
-                exit 1
-                ;;
-        esac
-    done
+    # 2. تنظيف ذاكرة التخزين المؤقت لـ apt
+    msg_info "تنظيف ذاكرة التخزين المؤقت (autoclean)..."
+    log_cmd "apt-get autoclean"
+    if apt-get autoclean >> "${LOG_FILE}" 2>&1; then
+        msg_ok "تم تنظيف ذاكرة التخزين المؤقت"
+    else
+        msg_warn "فشل تنظيف ذاكرة التخزين المؤقت"
+        all_ok=false
+    fi
 
-    # --- تنفيذ الاجراء ---
-    case "$action" in
-        update)
-            _safety_check_sudo
-            _log_init
-            _log_rotate
-            _log "INFO" "=== جلسة: تحديث سريع $(( SAHEL_DRY_RUN )) ==="
-            _safety_check_distro
-            _mod_update
-            exit 0
+    # 3. حذف ملفات .deb القديمة من الكاش
+    msg_info "حذف ملفات .deb القديمة من الكاش..."
+    log_cmd "apt-get clean"
+    if apt-get clean >> "${LOG_FILE}" 2>&1; then
+        msg_ok "تم حذف ملفات .deb المخزّنة"
+    else
+        msg_warn "فشل حذف ملفات .deb"
+        all_ok=false
+    fi
+
+    # 4. تنظيف النواة القديمة (الاحتفاظ بالحالية والسابقة فقط)
+    local current_kernel
+    current_kernel=$(uname -r)
+    local old_kernels
+    old_kernels=$(dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v "${current_kernel}" | grep -v 'linux-image-generic' || true)
+    if [[ -n "${old_kernels}" ]]; then
+        local kernel_count
+        kernel_count=$(echo "${old_kernels}" | wc -l)
+        if (( kernel_count > 1 )); then
+            # نحتفظ بآخر نواة قديمة كاحتياط
+            local kernels_to_remove
+            kernels_to_remove=$(echo "${old_kernels}" | head -n -1)
+            if [[ -n "${kernels_to_remove}" ]]; then
+                local remove_count
+                remove_count=$(echo "${kernels_to_remove}" | wc -l)
+                msg_info "إزالة ${remove_count} نواة قديمة (مع الاحتفاظ بنسخة احتياطية)..."
+                # shellcheck disable=SC2086
+                if DEBIAN_FRONTEND=noninteractive apt-get purge -y ${kernels_to_remove} >> "${LOG_FILE}" 2>&1; then
+                    msg_ok "تم إزالة النوى القديمة"
+                else
+                    msg_warn "فشل إزالة بعض النوى القديمة"
+                    all_ok=false
+                fi
+            fi
+        else
+            msg_info "لا توجد نوى قديمة زائدة للإزالة"
+        fi
+    else
+        msg_info "لا توجد نوى قديمة للإزالة"
+    fi
+
+    # 5. تنظيف سجلات systemd القديمة (الاحتفاظ بآخر 3 أيام)
+    if command -v journalctl &>/dev/null; then
+        msg_info "تنظيف سجلات systemd القديمة..."
+        log_cmd "journalctl --vacuum-time=3d"
+        if journalctl --vacuum-time=3d >> "${LOG_FILE}" 2>&1; then
+            msg_ok "تم تنظيف السجلات القديمة"
+        else
+            msg_warn "فشل تنظيف السجلات"
+            all_ok=false
+        fi
+    fi
+
+    # 6. تنظيف المصغّرات (thumbnails) القديمة
+    local thumb_dir="${HOME}/.cache/thumbnails"
+    # عند تشغيل كـ root عبر sudo، HOME قد يكون /root
+    # نحاول المسار الأصلي للمستخدم
+    local real_user_home
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        real_user_home=$(getent passwd "${SUDO_USER}" | cut -d: -f6 2>/dev/null || echo "")
+        thumb_dir="${real_user_home}/.cache/thumbnails"
+    fi
+    if [[ -d "${thumb_dir}" ]]; then
+        local thumb_size
+        thumb_size=$(du -sm "${thumb_dir}" 2>/dev/null | awk '{print $1}' || echo "0")
+        if (( thumb_size > 10 )); then
+            msg_info "تنظيف المصغّرات القديمة (${thumb_size} MB)..."
+            find "${thumb_dir}" -type f -atime +30 -delete 2>/dev/null || true
+            msg_ok "تم تنظيف المصغّرات القديمة"
+        fi
+    fi
+
+    # 7. تنظيف ملفات المؤقتة في /tmp القديمة (أكبر من 7 أيام)
+    local tmp_count
+    tmp_count=$(find /tmp -maxdepth 1 -type f -atime +7 2>/dev/null | wc -l || echo "0")
+    if (( tmp_count > 0 )); then
+        msg_info "تنظيف ${tmp_count} ملف مؤقت قديم من /tmp..."
+        find /tmp -maxdepth 1 -type f -atime +7 -delete 2>/dev/null || true
+        msg_ok "تم تنظيف الملفات المؤقتة"
+    fi
+
+    # حساب المساحة المستردة
+    local after_mb
+    after_mb=$(get_disk_free_mb)
+    local saved_mb=$(( after_mb - before_mb ))
+
+    echo ""
+    if (( saved_mb > 0 )); then
+        printf "  ${C_GREEN}${C_BOLD}${SYM_OK} المساحة المستردة: ${saved_mb} MB${C_RESET}\n"
+        log_info "المساحة المستردة: ${saved_mb} MB"
+    else
+        printf "  ${C_DIM}${SYM_INFO} لم يتم استرداد مساحة إضافية ملحوظة${C_RESET}\n"
+    fi
+
+    if [[ "${all_ok}" == true ]]; then
+        msg_ok "اكتمل التنظيف بنجاح"
+        CLEANUP_STATUS="نجاح"
+        (( COUNT_SUCCESS++ )) || true
+    else
+        msg_warn "اكتمل التنظيف مع بعض التحذيرات"
+        CLEANUP_STATUS="جزئي"
+    fi
+    SUMMARY_LINES+=("${SYM_BULLET} التنظيف: ${CLEANUP_STATUS}")
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# فحص إعادة التشغيل
+# ─────────────────────────────────────────────────────────────────────────────
+check_reboot_needed() {
+    if [[ -f /var/run/reboot-required ]]; then
+        REBOOT_RECOMMENDED="نعم"
+        msg_warn "يُوصى بإعادة تشغيل الجهاز لتطبيق التحديثات"
+        if [[ -f /var/run/reboot-required.pkgs ]]; then
+            msg_info "الحزم التي تطلب إعادة التشغيل:"
+            head -10 /var/run/reboot-required.pkgs | while IFS= read -r pkg; do
+                printf "    ${C_DIM}%s${C_RESET}\n" "${pkg}"
+            done
+        fi
+    else
+        msg_ok "لا حاجة لإعادة تشغيل الجهاز"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الملخص النهائي
+# ─────────────────────────────────────────────────────────────────────────────
+print_summary() {
+    echo ""
+    print_header_box "الملخص النهائي"
+    echo ""
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "عمليات ناجحة:" "${C_GREEN}${COUNT_SUCCESS}${C_RESET}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "تم تخطيها:" "${C_YELLOW}${COUNT_SKIPPED}${C_RESET}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "فشلت:" "${C_RED}${COUNT_FAILED}${C_RESET}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "تحذيرات:" "${C_YELLOW}${COUNT_WARNINGS}${C_RESET}"
+    print_line 50
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "حالة apt:" "${APT_STATUS}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "حالة snap:" "${SNAP_STATUS}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "حالة flatpak:" "${FLATPAK_STATUS}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "التنظيف:" "${CLEANUP_STATUS}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "إعادة تشغيل؟:" "${REBOOT_RECOMMENDED}"
+
+    if (( ${#ERROR_LINES[@]} > 0 )); then
+        echo ""
+        printf "  ${C_RED}${C_BOLD}الأخطاء:${C_RESET}\n"
+        for e in "${ERROR_LINES[@]}"; do
+            printf "    ${C_RED}${SYM_FAIL} %s${C_RESET}\n" "${e}"
+        done
+    fi
+
+    if (( ${#WARNING_LINES[@]} > 0 )); then
+        echo ""
+        printf "  ${C_YELLOW}${C_BOLD}التحذيرات:${C_RESET}\n"
+        for w in "${WARNING_LINES[@]}"; do
+            printf "    ${C_YELLOW}${SYM_WARN} %s${C_RESET}\n" "${w}"
+        done
+    fi
+
+    echo ""
+    if [[ -f "${LOG_FILE}" ]]; then
+        printf "  ${C_GRAY}${SYM_INFO} السجل الكامل: ${LOG_FILE}${C_RESET}\n"
+    fi
+    log_info "═══ انتهاء التشغيل: $(date '+%Y-%m-%d %H:%M:%S %Z') ═══"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الأوضاع الرئيسية
+# ─────────────────────────────────────────────────────────────────────────────
+
+# إعادة تهيئة العدّادات
+reset_counters() {
+    COUNT_SUCCESS=0; COUNT_SKIPPED=0; COUNT_FAILED=0; COUNT_WARNINGS=0
+    SUMMARY_LINES=(); WARNING_LINES=(); ERROR_LINES=()
+    APT_STATUS="—"; SNAP_STATUS="—"; FLATPAK_STATUS="—"
+    CLEANUP_STATUS="—"; REBOOT_RECOMMENDED="لا"
+}
+
+# ● الصيانة الآمنة (الوضع الافتراضي)
+mode_safe() {
+    if ! run_preflight; then
+        msg_fail "فشلت فحوصات ما قبل التشغيل — لا يمكن المتابعة"
+        return 1
+    fi
+    print_header_box "${SYM_SHIELD} الصيانة الآمنة"
+    do_apt_update       || true
+    do_apt_upgrade      || true
+    do_snap_refresh     || true
+    do_flatpak_update   || true
+    do_cleanup          || true
+    check_reboot_needed
+    print_summary
+    return 0
+}
+
+# ● المعاينة (Dry Run)
+mode_preview() {
+    print_header_box "${SYM_INFO} معاينة — لن يتم تنفيذ أي تغيير"
+    msg_info "هذا الوضع يعرض ما يمكن عرضه بدون تعديل النظام"
+    echo ""
+
+    # apt
+    msg_step "الحزم المرشحة للترقية (apt)"
+    local sim
+    sim=$(apt-get --simulate upgrade 2>&1) || true
+    local upgradable_count
+    upgradable_count=$(echo "${sim}" | grep -c "^Inst " || true)
+    if (( upgradable_count > 0 )); then
+        msg_info "عدد الحزم: ${upgradable_count}"
+        echo "${sim}" | grep "^Inst " | head -30 | while IFS= read -r line; do
+            printf "    ${C_DIM}%s${C_RESET}\n" "${line}"
+        done
+        if (( upgradable_count > 30 )); then
+            printf "    ${C_DIM}... و %d حزمة أخرى${C_RESET}\n" "$((upgradable_count - 30))"
+        fi
+    else
+        msg_ok "لا توجد حزم تحتاج ترقية"
+    fi
+
+    # dist-upgrade simulation
+    echo ""
+    msg_step "الفرق مع الترقية الكاملة (dist-upgrade)"
+    local dist_sim
+    dist_sim=$(apt-get --simulate dist-upgrade 2>&1) || true
+    local dist_remove
+    dist_remove=$(echo "${dist_sim}" | grep -c "^Remv " || true)
+    local dist_new
+    dist_new=$(echo "${dist_sim}" | grep -c "^Inst " || true)
+    msg_info "ستُثبَّت/تُرقّى: ${dist_new} — ستُزال: ${dist_remove}"
+    if (( dist_remove > 0 )); then
+        msg_warn "الحزم المرشحة للإزالة:"
+        echo "${dist_sim}" | grep "^Remv " | head -20 | while IFS= read -r line; do
+            printf "    ${C_YELLOW}%s${C_RESET}\n" "${line}"
+        done
+    fi
+
+    # autoremove simulation
+    echo ""
+    msg_step "الحزم المرشحة للحذف التلقائي (autoremove)"
+    local ar_sim
+    ar_sim=$(apt-get --simulate autoremove 2>&1) || true
+    local ar_count
+    ar_count=$(echo "${ar_sim}" | grep -c "^Remv " || true)
+    if (( ar_count > 0 )); then
+        msg_info "عدد الحزم: ${ar_count}"
+        echo "${ar_sim}" | grep "^Remv " | head -20 | while IFS= read -r line; do
+            printf "    ${C_DIM}%s${C_RESET}\n" "${line}"
+        done
+    else
+        msg_ok "لا توجد حزم يمكن حذفها تلقائيًا"
+    fi
+
+    # مساحة الكاش
+    echo ""
+    msg_step "حجم ذاكرة التخزين المؤقت"
+    local cache_size
+    cache_size=$(du -sm /var/cache/apt/archives/ 2>/dev/null | awk '{print $1}' || echo "0")
+    msg_info "حجم كاش apt: ${cache_size} MB"
+
+    # نوى قديمة
+    local current_kernel
+    current_kernel=$(uname -r)
+    local old_kernels
+    old_kernels=$(dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v "${current_kernel}" | grep -v 'linux-image-generic' || true)
+    if [[ -n "${old_kernels}" ]]; then
+        local kcount
+        kcount=$(echo "${old_kernels}" | wc -l)
+        msg_info "نوى قديمة مثبتة: ${kcount}"
+        echo "${old_kernels}" | while IFS= read -r k; do
+            printf "    ${C_DIM}%s${C_RESET}\n" "${k}"
+        done
+    fi
+
+    # حجم سجلات systemd
+    if command -v journalctl &>/dev/null; then
+        local journal_size
+        journal_size=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*\s*[KMGT]' | head -1 || echo "غير معروف")
+        msg_info "حجم سجلات systemd: ${journal_size}"
+    fi
+
+    # snap
+    echo ""
+    msg_step "حزم snap"
+    if command -v snap &>/dev/null; then
+        local snap_list
+        snap_list=$(snap refresh --list 2>&1) || true
+        if echo "${snap_list}" | grep -qi "All snaps up to date\|no updates"; then
+            msg_ok "جميع حزم snap محدّثة"
+        else
+            msg_info "حزم snap المتاح تحديثها:"
+            echo "${snap_list}" | head -20 | while IFS= read -r line; do
+                printf "    ${C_DIM}%s${C_RESET}\n" "${line}"
+            done
+        fi
+    else
+        msg_info "snap غير مثبّت"
+    fi
+
+    # flatpak
+    echo ""
+    msg_step "حزم flatpak"
+    if command -v flatpak &>/dev/null; then
+        msg_info "flatpak لا يوفر وضع معاينة كامل — سيُعرض عدد التطبيقات المثبّتة فقط"
+        local fp_count
+        fp_count=$(flatpak list --app 2>/dev/null | wc -l || echo 0)
+        msg_info "عدد تطبيقات flatpak المثبّتة: ${fp_count}"
+    else
+        msg_info "flatpak غير مثبّت"
+    fi
+
+    # reboot
+    echo ""
+    check_reboot_needed
+    echo ""
+    msg_info "انتهت المعاينة — لم يتم تعديل أي شيء على النظام"
+    return 0
+}
+
+# ● الصيانة المتقدمة
+mode_advanced() {
+    echo ""
+    printf "  ${C_RED}${C_BOLD}${SYM_WARN}  تحذير: الوضع المتقدم${C_RESET}\n"
+    print_line 50
+    printf "  ${C_YELLOW}هذا الوضع يستخدم dist-upgrade والذي قد يقوم بـ:${C_RESET}\n"
+    printf "  ${C_YELLOW}  ${SYM_BULLET} تثبيت حزم جديدة لم تكن مثبتة${C_RESET}\n"
+    printf "  ${C_YELLOW}  ${SYM_BULLET} إزالة حزم قائمة إذا تطلب ذلك حل التبعيات${C_RESET}\n"
+    printf "  ${C_YELLOW}  ${SYM_BULLET} تغيير حالة حزم محجوزة (held)${C_RESET}\n"
+    printf "  ${C_YELLOW}${SYM_WARN}  لا يتضمن do-release-upgrade ولن يغيّر إصدار أوبنتو${C_RESET}\n"
+    printf "  ${C_YELLOW}${SYM_WARN}  يُنصح بتشغيل المعاينة أولاً (خيار 2)${C_RESET}\n"
+    print_line 50
+    echo ""
+
+    printf "  ${C_BOLD}هل تريد المتابعة؟ (نعم/لا): ${C_RESET}"
+    local confirm
+    read -r confirm
+    case "${confirm}" in
+        نعم|y|Y|yes|YES)
+            log_info "المستخدم وافق على الوضع المتقدم"
             ;;
-        clean)
-            _safety_check_sudo
-            _log_init
-            _log_rotate
-            _log "INFO" "=== جلسة: تنظيف سريع ==="
-            _safety_check_distro
-            _mod_cleanup
-            exit 0
-            ;;
-        info)
-            _log_init
-            _sysinfo_display
-            exit 0
-            ;;
-        self-update)
-            _log_init
-            _mod_self_update
-            exit 0
-            ;;
-        "")
-            # الوضع التفاعلي
+        *)
+            msg_info "تم إلغاء الوضع المتقدم"
+            log_info "المستخدم ألغى الوضع المتقدم"
+            return 0
             ;;
     esac
 
-    # --- الوضع التفاعلي ---
-    _safety_check_sudo
-    _log_init
-    _log_rotate
-    _log "INFO" "=== بدء جلسة تفاعلية ==="
-    _safety_check_distro
-    _main_menu
+    if ! run_preflight; then
+        msg_fail "فشلت فحوصات ما قبل التشغيل — لا يمكن المتابعة"
+        return 1
+    fi
+    print_header_box "${SYM_ROCKET} الصيانة المتقدمة"
+    do_apt_update           || true
+    do_apt_full_upgrade     || true
+    do_snap_refresh         || true
+    do_flatpak_update       || true
+    do_cleanup              || true
+    check_reboot_needed
+    print_summary
+    return 0
+}
+
+# ● التنظيف فقط — لا يتطلب اتصال إنترنت
+mode_cleanup_only() {
+    if ! run_preflight --skip-connectivity; then
+        msg_fail "فشلت فحوصات ما قبل التشغيل — لا يمكن المتابعة"
+        return 1
+    fi
+    print_header_box "${SYM_BROOM} التنظيف فقط"
+    do_cleanup || true
+    check_reboot_needed
+    print_summary
+    return 0
+}
+
+# ● حالة النظام
+mode_system_status() {
+    print_header_box "${SYM_INFO} حالة النظام"
+    echo ""
+
+    # معلومات النظام
+    # shellcheck source=/dev/null
+    source /etc/os-release 2>/dev/null || true
+    local kernel session_type de
+
+    kernel=$(uname -r)
+    session_type="${XDG_SESSION_TYPE:-غير معروف}"
+    de="${XDG_CURRENT_DESKTOP:-غير معروف}"
+
+    printf "  ${C_BOLD}${C_WHITE}%-26s${C_RESET} %s\n" "نظام التشغيل:" "${PRETTY_NAME:-غير معروف}"
+    printf "  ${C_BOLD}${C_WHITE}%-26s${C_RESET} %s\n" "النواة:" "${kernel}"
+    printf "  ${C_BOLD}${C_WHITE}%-26s${C_RESET} %s\n" "نوع الجلسة:" "${session_type}"
+    printf "  ${C_BOLD}${C_WHITE}%-26s${C_RESET} %s\n" "سطح المكتب:" "${de}"
+    printf "  ${C_BOLD}${C_WHITE}%-26s${C_RESET} %s\n" "المعمارية:" "$(dpkg --print-architecture 2>/dev/null || echo 'غير معروف')"
+    printf "  ${C_BOLD}${C_WHITE}%-26s${C_RESET} %s\n" "اسم الجهاز:" "$(hostname)"
+
+    print_line 50
+    printf "  ${C_BOLD}${C_CYAN}مديرو الحزم:${C_RESET}\n"
+
+    # apt
+    if command -v apt-get &>/dev/null; then
+        local apt_ver
+        apt_ver=$(apt-get --version 2>/dev/null | head -1 | awk '{print $2}')
+        local upgradable
+        upgradable=$(apt list --upgradable 2>/dev/null | grep -c "upgradable" || echo 0)
+        printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %-20s %s (${upgradable} حزمة قابلة للترقية)\n" "apt:" "${apt_ver}"
+    else
+        printf "  ${C_RED}${SYM_FAIL}${C_RESET}  %-20s %s\n" "apt:" "غير موجود!"
+    fi
+
+    # snap
+    if command -v snap &>/dev/null; then
+        local snap_ver
+        snap_ver=$(snap version 2>/dev/null | head -1 | awk '{print $2}')
+        local snap_count
+        snap_count=$(snap list 2>/dev/null | tail -n+2 | wc -l || echo 0)
+        printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %-20s %s (${snap_count} حزمة مثبّتة)\n" "snap:" "${snap_ver}"
+    else
+        printf "  ${C_GRAY}${SYM_INFO}${C_RESET}  %-20s %s\n" "snap:" "غير مثبّت"
+    fi
+
+    # flatpak
+    if command -v flatpak &>/dev/null; then
+        local fp_ver
+        fp_ver=$(flatpak --version 2>/dev/null | awk '{print $2}')
+        local fp_count
+        fp_count=$(flatpak list --app 2>/dev/null | wc -l || echo 0)
+        printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %-20s %s (${fp_count} تطبيق)\n" "flatpak:" "${fp_ver}"
+    else
+        printf "  ${C_GRAY}${SYM_INFO}${C_RESET}  %-20s %s\n" "flatpak:" "غير مثبّت"
+    fi
+
+    # القرص
+    print_line 50
+    printf "  ${C_BOLD}${C_CYAN}استخدام القرص (/)${C_RESET}\n"
+    local disk_info
+    disk_info=$(df -h / | tail -1)
+    local disk_total disk_used disk_avail disk_pct
+    disk_total=$(echo "${disk_info}" | awk '{print $2}')
+    disk_used=$(echo "${disk_info}" | awk '{print $3}')
+    disk_avail=$(echo "${disk_info}" | awk '{print $4}')
+    disk_pct=$(echo "${disk_info}" | awk '{print $5}')
+    printf "  %-20s %s\n" "الحجم الكلي:" "${disk_total}"
+    printf "  %-20s %s\n" "المستخدم:" "${disk_used} (${disk_pct})"
+    printf "  %-20s %s\n" "المتاح:" "${disk_avail}"
+
+    # شريط تقدم بسيط لاستخدام القرص
+    local pct_num=${disk_pct//%/}
+    local bar_width=40
+    local filled=$(( pct_num * bar_width / 100 ))
+    local empty=$(( bar_width - filled ))
+    local bar_color="${C_GREEN}"
+    if (( pct_num > 80 )); then bar_color="${C_RED}";
+    elif (( pct_num > 60 )); then bar_color="${C_YELLOW}"; fi
+    printf "  ["
+    printf "${bar_color}"
+    printf '%*s' "${filled}" '' | tr ' ' '#'
+    printf "${C_GRAY}"
+    printf '%*s' "${empty}" '' | tr ' ' '-'
+    printf "${C_RESET}] %s\n" "${disk_pct}"
+
+    # حجم الكاش
+    print_line 50
+    printf "  ${C_BOLD}${C_CYAN}أحجام التخزين المؤقت:${C_RESET}\n"
+    local apt_cache_size
+    apt_cache_size=$(du -sh /var/cache/apt/archives/ 2>/dev/null | awk '{print $1}' || echo "0")
+    printf "  %-20s %s\n" "كاش apt:" "${apt_cache_size}"
+    if command -v journalctl &>/dev/null; then
+        local journal_usage
+        journal_usage=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*\s*[KMGT]' | head -1 || echo "غير معروف")
+        printf "  %-20s %s\n" "سجلات systemd:" "${journal_usage}"
+    fi
+
+    # Reboot
+    print_line 50
+    if [[ -f /var/run/reboot-required ]]; then
+        printf "  ${C_YELLOW}${SYM_WARN} إعادة التشغيل مطلوبة${C_RESET}\n"
+    else
+        printf "  ${C_GREEN}${SYM_OK} لا حاجة لإعادة التشغيل${C_RESET}\n"
+    fi
+
+    # Uptime
+    printf "  %-20s %s\n" "وقت التشغيل:" "$(uptime -p 2>/dev/null | sed 's/up //' || echo 'غير معروف')"
+    echo ""
+    return 0
+}
+
+# ● حول الأداة
+mode_about() {
+    echo ""
+    printf "${C_CYAN}"
+    cat << 'LOGO'
+    ██╗   ██╗██████╗ ██╗   ██╗███╗   ██╗████████╗██╗   ██╗
+    ██║   ██║██╔══██╗██║   ██║████╗  ██║╚══██╔══╝██║   ██║
+    ██║   ██║██████╔╝██║   ██║██╔██╗ ██║   ██║   ██║   ██║
+    ██║   ██║██╔══██╗██║   ██║██║╚██╗██║   ██║   ██║   ██║
+    ╚██████╔╝██████╔╝╚██████╔╝██║ ╚████║   ██║   ╚██████╔╝
+     ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝    ╚═════╝
+LOGO
+    printf "${C_RESET}"
+    printf "    ${C_BOLD}${C_WHITE}M A I N T A I N${C_RESET}\n"
+    echo ""
+    print_line 58
+    printf "  ${C_BOLD}الاسم${C_RESET}      : %s\n" "${SCRIPT_NAME}"
+    printf "  ${C_BOLD}الإصدار${C_RESET}    : %s\n" "${SCRIPT_VERSION}"
+    printf "  ${C_BOLD}التاريخ${C_RESET}    : %s\n" "${SCRIPT_DATE}"
+    printf "  ${C_BOLD}المطوّر${C_RESET}    : %s\n" "${SCRIPT_AUTHOR}"
+    printf "  ${C_BOLD}الموقع${C_RESET}     : %s\n" "${SCRIPT_URL}"
+    printf "  ${C_BOLD}الرخصة${C_RESET}     : MIT\n"
+    print_line 58
+    echo ""
+    printf "  ${C_DIM}أداة صيانة وتحديث احترافية لأوبنتو سطح المكتب.${C_RESET}\n"
+    printf "  ${C_DIM}صُمّمت بعقلية أمنية صارمة ومحافظة افتراضيًا.${C_RESET}\n"
+    printf "  ${C_DIM}لا تقوم بترقية إصدار النظام ولا تعدّل المصادر.${C_RESET}\n"
+    echo ""
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# شاشة الافتتاح
+# ─────────────────────────────────────────────────────────────────────────────
+print_banner() {
+    clear 2>/dev/null || true
+    printf "${C_CYAN}${C_BOLD}"
+    cat << 'BANNER'
+
+     ┌──────────────────────────────────────────────────────────┐
+     │          أداة صيانة وتحديث أوبنتو سطح المكتب           │
+     │            ubuntu-maintain                               │
+     └──────────────────────────────────────────────────────────┘
+BANNER
+    printf "${C_RESET}"
+    printf "     ${C_DIM}v${SCRIPT_VERSION} — ${SCRIPT_AUTHOR} — ${SCRIPT_URL}${C_RESET}\n"
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# القائمة التفاعلية
+# ─────────────────────────────────────────────────────────────────────────────
+show_menu() {
+    printf "  ${C_BOLD}${C_WHITE}اختر العملية المطلوبة:${C_RESET}\n"
+    echo ""
+    printf "    ${C_GREEN}${C_BOLD}1${C_RESET}  ${SYM_SHIELD}  صيانة آمنة ${C_DIM}(تحديث + ترقية + تنظيف)${C_RESET}\n"
+    printf "    ${C_BLUE}${C_BOLD}2${C_RESET}  ${SYM_INFO}  معاينة قبل التنفيذ ${C_DIM}(Dry Run)${C_RESET}\n"
+    printf "    ${C_RED}${C_BOLD}3${C_RESET}  ${SYM_ROCKET}  صيانة متقدمة ${C_DIM}(dist-upgrade — تحذير!)${C_RESET}\n"
+    printf "    ${C_YELLOW}${C_BOLD}4${C_RESET}  ${SYM_BROOM}  تنظيف فقط\n"
+    printf "    ${C_CYAN}${C_BOLD}5${C_RESET}  ${SYM_GEAR}  حالة النظام\n"
+    printf "    ${C_MAGENTA}${C_BOLD}6${C_RESET}  ${SYM_BULLET}  حول الأداة\n"
+    printf "    ${C_GRAY}${C_BOLD}0${C_RESET}  ${SYM_ARROW}  خروج${C_RESET}\n"
+    echo ""
+    printf "  ${C_BOLD}${SYM_ARROW} اختيارك: ${C_RESET}"
+}
+
+interactive_loop() {
+    INTERACTIVE_MODE=true
+    while true; do
+        print_banner
+        show_menu
+        local choice
+        read -r choice
+
+        # إعادة تهيئة العدّادات لكل عملية جديدة
+        reset_counters
+
+        case "${choice}" in
+            1) mode_safe || true ;;
+            2) mode_preview || true ;;
+            3) mode_advanced || true ;;
+            4) mode_cleanup_only || true ;;
+            5) mode_system_status || true ;;
+            6) mode_about || true ;;
+            0|q|Q|خروج)
+                echo ""
+                msg_info "شكرًا لاستخدامك ${SCRIPT_NAME}"
+                exit 0
+                ;;
+            *)
+                msg_warn "اختيار غير صالح: ${choice}"
+                ;;
+        esac
+        echo ""
+        printf "  ${C_DIM}اضغط Enter للعودة إلى القائمة...${C_RESET}"
+        read -r
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# واجهة CLI (غير تفاعلية)
+# ─────────────────────────────────────────────────────────────────────────────
+usage() {
+    cat << EOF
+${SCRIPT_NAME} v${SCRIPT_VERSION} — أداة صيانة وتحديث أوبنتو سطح المكتب
+${SCRIPT_AUTHOR} — ${SCRIPT_URL}
+
+الاستخدام:
+  ${SCRIPT_NAME} [خيار]
+
+الخيارات:
+  --safe          الصيانة الآمنة (الوضع الافتراضي)
+  --preview       معاينة بدون تنفيذ (Dry Run)
+  --advanced      صيانة متقدمة (dist-upgrade)
+  --cleanup       تنظيف فقط
+  --status        عرض حالة النظام
+  --about         حول الأداة
+  --help, -h      عرض هذه المساعدة
+  (بدون خيارات)   القائمة التفاعلية
+
+أمثلة:
+  sudo ${SCRIPT_NAME} --safe
+  sudo ${SCRIPT_NAME} --preview
+  sudo ${SCRIPT_NAME}              # القائمة التفاعلية
+EOF
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# نقطة الدخول الرئيسية
+# ─────────────────────────────────────────────────────────────────────────────
+main() {
+    setup_colors
+    setup_symbols
+    init_logging
+
+    # --help و --about لا تحتاج root
+    case "${1:-}" in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --about)
+            mode_about
+            exit 0
+            ;;
+        --status)
+            mode_system_status
+            exit 0
+            ;;
+    esac
+
+    # التحقق من صلاحيات root لبقية الأوضاع
+    ensure_root "$@"
+
+    # إعادة تهيئة الألوان والتسجيل بعد sudo (قد يتغير TERM)
+    setup_colors
+    setup_symbols
+    init_logging
+
+    case "${1:-}" in
+        --safe)
+            mode_safe
+            ;;
+        --preview)
+            mode_preview
+            ;;
+        --advanced)
+            mode_advanced
+            ;;
+        --cleanup)
+            mode_cleanup_only
+            ;;
+        "")
+            # الوضع التفاعلي
+            if [[ -t 0 ]]; then
+                interactive_loop
+            else
+                # stdin ليس طرفية — تشغيل الوضع الآمن تلقائيًا
+                log_info "تشغيل غير تفاعلي — الوضع الآمن الافتراضي"
+                mode_safe
+            fi
+            ;;
+        *)
+            printf "خيار غير معروف: %s\n" "$1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
 }
 
 main "$@"
