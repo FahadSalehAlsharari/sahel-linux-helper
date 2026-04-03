@@ -1,5 +1,15 @@
+# Logs and runtime artifacts
 *.log
+*.out
+*.err
+
+# Temp and backup
 *.tmp
 *.bak
+*~
+
+# Editor / OS
 .DS_Store
 Thumbs.db
+*.swp
+*.swo

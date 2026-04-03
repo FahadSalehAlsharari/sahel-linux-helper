@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  ubuntu-maintain — أداة صيانة وتحديث أوبنتو سطح المكتب                  ║
+# ║  سهل (sahel) — أداة صيانة وتحديث أوبنتو سطح المكتب                      ║
 # ║  Production-grade Ubuntu Desktop maintenance & update utility            ║
 # ╠═══════════════════════════════════════════════════════════════════════════╣
 # ║  Author  : Fahad Alsharari                                              ║
 # ║  Website : https://fahadalsharari.sa                                    ║
 # ║  License : MIT                                                          ║
-# ║  Version : 2.0.0                                                        ║
-# ║  Date    : 2026-03-25                                                   ║
+# ║  Version : 2.1.0                                                        ║
+# ║  Date    : 2026-04-03                                                   ║
 # ║  Requires: Ubuntu Desktop 20.04+ / Bash 4.4+                           ║
 # ╠═══════════════════════════════════════════════════════════════════════════╣
 # ║  apt-get مستخدم بدلاً من apt لأنّ واجهة apt-get مستقرة ومصمّمة          ║
@@ -42,9 +42,9 @@ IFS=$'\n\t'
 # ─────────────────────────────────────────────────────────────────────────────
 # الثوابت العامة
 # ─────────────────────────────────────────────────────────────────────────────
-readonly SCRIPT_NAME="ubuntu-maintain"
-readonly SCRIPT_VERSION="2.0.0"
-readonly SCRIPT_DATE="2026-03-25"
+readonly SCRIPT_NAME="sahel"
+readonly SCRIPT_VERSION="2.1.0"
+readonly SCRIPT_DATE="2026-04-03"
 readonly SCRIPT_AUTHOR="Fahad Alsharari"
 readonly SCRIPT_URL="https://fahadalsharari.sa"
 
@@ -59,6 +59,7 @@ LOG_FILE="${LOG_DIR}/${SCRIPT_NAME}-$(date +%Y%m%d-%H%M%S).log"
 
 # متغير للتحكم في الوضع التفاعلي
 INTERACTIVE_MODE=false
+AUTO_CONFIRM=false
 
 # ─────────────────────────────────────────────────────────────────────────────
 # عدّادات التقرير النهائي
@@ -179,10 +180,47 @@ log_entry() {
 
 log_info()    { log_entry "INFO"    "$@"; }
 log_success() { log_entry "SUCCESS" "$@"; }
-log_warn()    { log_entry "WARN"    "$@"; WARNING_LINES+=("$*"); (( COUNT_WARNINGS++ )) || true; }
-log_error()   { log_entry "ERROR"   "$@"; ERROR_LINES+=("$*"); }
-log_skip()    { log_entry "SKIP"    "$@"; (( COUNT_SKIPPED++ )) || true; }
+log_warn()    { log_entry "WARN"    "$@"; }
+log_error()   { log_entry "ERROR"   "$@"; }
+log_skip()    { log_entry "SKIP"    "$@"; }
 log_cmd()     { log_entry "CMD"     "$@"; }
+
+append_warning() {
+    WARNING_LINES+=("$*")
+    log_warn "$*"
+}
+
+append_error() {
+    ERROR_LINES+=("$*")
+    log_error "$*"
+}
+
+record_outcome() {
+    local status="$1"; shift
+    local text="$*"
+    case "${status}" in
+        success)
+            (( COUNT_SUCCESS++ )) || true
+            SUMMARY_LINES+=("${SYM_OK} ${text}")
+            ;;
+        skipped)
+            (( COUNT_SKIPPED++ )) || true
+            SUMMARY_LINES+=("${SYM_INFO} ${text}")
+            ;;
+        warning)
+            (( COUNT_WARNINGS++ )) || true
+            SUMMARY_LINES+=("${SYM_WARN} ${text}")
+            ;;
+        failed)
+            (( COUNT_FAILED++ )) || true
+            SUMMARY_LINES+=("${SYM_FAIL} ${text}")
+            ;;
+    esac
+}
+
+count_total_outcomes() {
+    echo $(( COUNT_SUCCESS + COUNT_SKIPPED + COUNT_FAILED + COUNT_WARNINGS ))
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # دوال الطباعة المنسقة
@@ -220,8 +258,8 @@ print_header_box() {
 }
 
 msg_ok()   { printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %s\n" "$*"; log_success "$*"; }
-msg_fail() { printf "  ${C_RED}${SYM_FAIL}${C_RESET}  %s\n" "$*"; log_error "$*"; }
-msg_warn() { printf "  ${C_YELLOW}${SYM_WARN}${C_RESET}  %s\n" "$*"; log_warn "$*"; }
+msg_fail() { printf "  ${C_RED}${SYM_FAIL}${C_RESET}  %s\n" "$*"; append_error "$*"; }
+msg_warn() { printf "  ${C_YELLOW}${SYM_WARN}${C_RESET}  %s\n" "$*"; append_warning "$*"; }
 msg_info() { printf "  ${C_BLUE}${SYM_INFO}${C_RESET}  %s\n" "$*"; log_info "$*"; }
 msg_step() { printf "\n  ${C_MAGENTA}${SYM_GEAR}${C_RESET}  ${C_BOLD}%s${C_RESET}\n" "$*"; log_info "خطوة: $*"; }
 
@@ -334,20 +372,32 @@ check_bash_version() {
 }
 
 check_connectivity() {
-    local hosts=("archive.ubuntu.com" "security.ubuntu.com" "1.1.1.1")
-    for host in "${hosts[@]}"; do
-        if ping -c1 -W "${CONNECTIVITY_TIMEOUT}" "${host}" &>/dev/null; then
-            msg_ok "اتصال الإنترنت متاح"
-            log_info "فحص الاتصال نجح عبر ${host}"
-            return 0
-        fi
-    done
-    # محاولة أخيرة عبر curl
-    if curl -sf --max-time "${CONNECTIVITY_TIMEOUT}" "https://archive.ubuntu.com" &>/dev/null; then
-        msg_ok "اتصال الإنترنت متاح (عبر HTTPS)"
+    local urls=("https://archive.ubuntu.com/ubuntu/" "https://security.ubuntu.com/ubuntu/")
+    local host
+    if command -v curl &>/dev/null; then
+        for host in "${urls[@]}"; do
+            if curl -fsI --max-time "${CONNECTIVITY_TIMEOUT}" "${host}" &>/dev/null; then
+                msg_ok "اتصال الإنترنت متاح"
+                log_info "فحص الاتصال نجح عبر ${host}"
+                return 0
+            fi
+        done
+    fi
+    if command -v wget &>/dev/null; then
+        for host in "${urls[@]}"; do
+            if wget -q --spider --timeout="${CONNECTIVITY_TIMEOUT}" "${host}" 2>/dev/null; then
+                msg_ok "اتصال الإنترنت متاح"
+                log_info "فحص الاتصال نجح عبر ${host}"
+                return 0
+            fi
+        done
+    fi
+    if ping -c1 -W "${CONNECTIVITY_TIMEOUT}" "1.1.1.1" &>/dev/null; then
+        msg_ok "اتصال الإنترنت متاح"
+        log_info "فحص الاتصال نجح عبر 1.1.1.1"
         return 0
     fi
-    msg_fail "لا يوجد اتصال بالإنترنت — لا يمكن متابعة التحديث"
+    msg_fail "لا يوجد اتصال إنترنت صالح لمخازن Ubuntu"
     return 1
 }
 
@@ -367,6 +417,20 @@ check_disk_space() {
     return 0
 }
 
+is_lock_busy() {
+    local lock_file="$1"
+    [[ -e "${lock_file}" ]] || return 1
+    if command -v fuser &>/dev/null; then
+        fuser "${lock_file}" &>/dev/null
+        return $?
+    fi
+    if command -v lsof &>/dev/null; then
+        lsof "${lock_file}" &>/dev/null
+        return $?
+    fi
+    return 1
+}
+
 check_apt_lock() {
     local lock_files=(
         /var/lib/dpkg/lock-frontend
@@ -378,7 +442,7 @@ check_apt_lock() {
     while (( waited < LOCK_WAIT_SEC )); do
         local locked=false
         for lf in "${lock_files[@]}"; do
-            if [[ -f "${lf}" ]] && fuser "${lf}" &>/dev/null; then
+            if is_lock_busy "${lf}"; then
                 locked=true
                 break
             fi
@@ -389,6 +453,14 @@ check_apt_lock() {
         fi
         if (( waited == 0 )); then
             msg_warn "يوجد قفل على apt/dpkg — بانتظار تحرّره (حتى ${LOCK_WAIT_SEC} ثانية)..."
+            local owners
+            owners="$(pgrep -fa "apt|dpkg|unattended-upgrade" 2>/dev/null | head -5 || true)"
+            if [[ -n "${owners}" ]]; then
+                msg_info "العمليات الحالية:"
+                while IFS= read -r owner; do
+                    [[ -n "${owner}" ]] && printf "    ${C_DIM}%s${C_RESET}\n" "${owner}"
+                done <<< "${owners}"
+            fi
         fi
         sleep 5
         (( waited += 5 )) || true
@@ -399,10 +471,17 @@ check_apt_lock() {
 
 # إصلاح أي حالة dpkg مكسورة قبل البدء
 try_fix_dpkg() {
-    if ! dpkg --audit &>/dev/null; then
+    local audit_output
+    audit_output="$(dpkg --audit 2>&1 || true)"
+    if [[ -n "${audit_output//[[:space:]]/}" ]]; then
         msg_warn "اكتُشفت حالة dpkg غير مكتملة — محاولة إصلاح..."
         log_cmd "dpkg --configure -a"
         if dpkg --configure -a >> "${LOG_FILE}" 2>&1; then
+            audit_output="$(dpkg --audit 2>&1 || true)"
+            if [[ -n "${audit_output//[[:space:]]/}" ]]; then
+                msg_fail "ما زالت حالة dpkg غير مكتملة بعد الإصلاح"
+                return 1
+            fi
             msg_ok "تم إصلاح dpkg"
         else
             msg_fail "فشل إصلاح dpkg — قد يحتاج تدخلاً يدويًا"
@@ -460,63 +539,56 @@ run_preflight() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# تنفيذ أمر مع تسجيل وإدارة حالة
-# ─────────────────────────────────────────────────────────────────────────────
-run_logged() {
-    local desc="$1"; shift
-    log_cmd "$*"
-    local output rc=0
-    output=$("$@" 2>&1) || rc=$?
-    if [[ -n "${output}" ]]; then
-        echo "${output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
-    fi
-    if (( rc == 0 )); then
-        msg_ok "${desc}"
-        (( COUNT_SUCCESS++ )) || true
-        SUMMARY_LINES+=("${SYM_OK} ${desc}")
-    else
-        msg_fail "${desc} (كود: ${rc})"
-        (( COUNT_FAILED++ )) || true
-        SUMMARY_LINES+=("${SYM_FAIL} ${desc} — كود: ${rc}")
-        ERROR_LINES+=("${desc} — كود الخروج: ${rc}")
-    fi
-    return "${rc}"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
 # عمليات apt
 # ─────────────────────────────────────────────────────────────────────────────
 do_apt_update() {
     msg_step "تحديث قائمة الحزم (apt-get update)"
     start_spinner "جارٍ تحديث القوائم..."
     local output rc=0
-    log_cmd "apt-get update"
-    output=$(apt-get update 2>&1) || rc=$?
+    log_cmd "apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15"
+    output=$(DEBIAN_FRONTEND=noninteractive apt-get update \
+        -o Acquire::Retries=3 \
+        -o Acquire::http::Timeout=15 \
+        -o Acquire::https::Timeout=15 2>&1) || rc=$?
     stop_spinner
-    echo "${output}" | head -100 >> "${LOG_FILE}" 2>/dev/null || true
-    if (( rc == 0 )); then
-        msg_ok "تم تحديث قائمة الحزم"
-        (( COUNT_SUCCESS++ )) || true
-    else
+    echo "${output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
+    if (( rc != 0 )); then
         msg_fail "فشل تحديث القائمة (كود: ${rc})"
-        (( COUNT_FAILED++ )) || true
-        APT_STATUS="فشل التحديث"
+        APT_STATUS="فشل تحديث الفهارس"
+        record_outcome "failed" "apt update: فشل تحديث الفهارس"
         return "${rc}"
     fi
+    local warn_count
+    warn_count=$(echo "${output}" | grep -c "^W:" || true)
+    if (( warn_count > 0 )); then
+        msg_warn "تم تحديث الفهارس مع ${warn_count} تحذير"
+        APT_STATUS="نجاح مع تحذيرات"
+        record_outcome "warning" "apt update: نجح مع ${warn_count} تحذير"
+        return 0
+    fi
+    msg_ok "تم تحديث قائمة الحزم"
+    APT_STATUS="نجاح"
+    record_outcome "success" "apt update: تم تحديث الفهارس"
     return 0
 }
 
 do_apt_upgrade() {
     msg_step "ترقية الحزم (apt-get upgrade)"
-    local sim_output
-    sim_output=$(apt-get --simulate upgrade 2>&1) || true
+    local sim_output sim_rc=0
+    sim_output=$(apt-get --simulate upgrade 2>&1) || sim_rc=$?
+    echo "${sim_output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
+    if (( sim_rc != 0 )); then
+        msg_fail "فشلت محاكاة الترقية قبل التنفيذ (كود: ${sim_rc})"
+        APT_STATUS="فشل محاكاة الترقية"
+        record_outcome "failed" "apt upgrade: فشلت محاكاة الترقية"
+        return "${sim_rc}"
+    fi
     local upgradable
     upgradable=$(echo "${sim_output}" | grep -c "^Inst " || true)
     if (( upgradable == 0 )); then
-        msg_ok "لا توجد حزم تحتاج ترقية"
+        msg_info "لا توجد حزم تحتاج ترقية"
         APT_STATUS="لا يوجد تحديثات"
-        (( COUNT_SUCCESS++ )) || true
-        SUMMARY_LINES+=("${SYM_OK} لا توجد حزم للترقية")
+        record_outcome "skipped" "apt upgrade: لا توجد حزم قابلة للترقية"
         return 0
     fi
     msg_info "عدد الحزم المرشحة للترقية: ${upgradable}"
@@ -527,27 +599,52 @@ do_apt_upgrade() {
         -o Dpkg::Options::="--force-confold" \
         >> "${LOG_FILE}" 2>&1 || rc=$?
     stop_spinner
-    if (( rc == 0 )); then
-        msg_ok "تمت ترقية ${upgradable} حزمة بنجاح"
-        APT_STATUS="نجاح (${upgradable} حزمة)"
-        (( COUNT_SUCCESS++ )) || true
-        SUMMARY_LINES+=("${SYM_OK} ترقية apt: ${upgradable} حزمة")
-    else
+    if (( rc != 0 )); then
         msg_fail "فشل في ترقية بعض الحزم (كود: ${rc})"
-        APT_STATUS="فشل جزئي"
-        (( COUNT_FAILED++ )) || true
-        SUMMARY_LINES+=("${SYM_FAIL} ترقية apt فشلت جزئيًا")
+        APT_STATUS="فشل الترقية"
+        record_outcome "failed" "apt upgrade: فشل التنفيذ"
+        return "${rc}"
     fi
-    return "${rc}"
+    local post_sim remaining updated
+    post_sim=$(apt-get --simulate upgrade 2>/dev/null || true)
+    remaining=$(echo "${post_sim}" | grep -c "^Inst " || true)
+    updated=$(( upgradable - remaining ))
+    if (( updated < 0 )); then
+        updated=0
+    fi
+    if (( remaining == 0 )); then
+        msg_ok "تمت ترقية ${updated} حزمة بنجاح"
+        APT_STATUS="نجاح (${updated} حزمة)"
+        record_outcome "success" "apt upgrade: تم تحديث ${updated} من ${upgradable}"
+    else
+        msg_warn "تم تحديث ${updated} حزمة وبقي ${remaining} حزمة قابلة للترقية"
+        APT_STATUS="جزئي (${updated}/${upgradable})"
+        record_outcome "warning" "apt upgrade: تم تحديث ${updated} وبقي ${remaining}"
+    fi
+    return 0
 }
 
 do_apt_full_upgrade() {
     msg_step "ترقية كاملة (apt-get dist-upgrade) — وضع متقدم"
-    local sim_output
-    sim_output=$(apt-get --simulate dist-upgrade 2>&1) || true
-    local to_remove to_install
+    local sim_output sim_rc=0
+    sim_output=$(apt-get --simulate dist-upgrade 2>&1) || sim_rc=$?
+    echo "${sim_output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
+    if (( sim_rc != 0 )); then
+        msg_fail "فشلت محاكاة الترقية الكاملة قبل التنفيذ (كود: ${sim_rc})"
+        APT_STATUS="فشل محاكاة dist-upgrade"
+        record_outcome "failed" "dist-upgrade: فشلت المحاكاة"
+        return "${sim_rc}"
+    fi
+    local to_remove to_install remaining updated
     to_remove=$(echo "${sim_output}" | grep -c "^Remv " || true)
     to_install=$(echo "${sim_output}" | grep -c "^Inst " || true)
+
+    if (( to_install == 0 && to_remove == 0 )); then
+        msg_info "لا توجد تغييرات مطلوبة في dist-upgrade"
+        APT_STATUS="لا يوجد تحديثات"
+        record_outcome "skipped" "dist-upgrade: لا توجد تغييرات"
+        return 0
+    fi
 
     msg_info "ستُثبَّت: ${to_install} — ستُزال: ${to_remove}"
 
@@ -565,16 +662,28 @@ do_apt_full_upgrade() {
         >> "${LOG_FILE}" 2>&1 || rc=$?
     stop_spinner
 
-    if (( rc == 0 )); then
-        msg_ok "اكتملت الترقية الكاملة"
-        APT_STATUS="نجاح — ترقية كاملة"
-        (( COUNT_SUCCESS++ )) || true
-    else
+    if (( rc != 0 )); then
         msg_fail "فشل في الترقية الكاملة (كود: ${rc})"
         APT_STATUS="فشل الترقية الكاملة"
-        (( COUNT_FAILED++ )) || true
+        record_outcome "failed" "dist-upgrade: فشل التنفيذ"
+        return "${rc}"
     fi
-    return "${rc}"
+
+    remaining=$(apt-get --simulate dist-upgrade 2>/dev/null | grep -c "^Inst " || true)
+    updated=$(( to_install - remaining ))
+    if (( updated < 0 )); then
+        updated=0
+    fi
+    if (( remaining == 0 )); then
+        msg_ok "اكتملت الترقية الكاملة (${updated} حزمة)"
+        APT_STATUS="نجاح — ترقية كاملة"
+        record_outcome "success" "dist-upgrade: اكتملت العملية (${updated} حزمة)"
+    else
+        msg_warn "اكتملت العملية جزئيًا: تم تحديث ${updated} وبقي ${remaining}"
+        APT_STATUS="جزئي (${updated}/${to_install})"
+        record_outcome "warning" "dist-upgrade: جزئي (${updated}/${to_install})"
+    fi
+    return 0
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,37 +694,77 @@ do_snap_refresh() {
         msg_info "snap غير مثبّت — تم التخطي"
         SNAP_STATUS="غير مثبّت"
         log_skip "snap غير مثبّت"
-        SUMMARY_LINES+=("${SYM_INFO} snap: غير مثبّت — تم التخطي")
+        record_outcome "skipped" "snap: غير مثبّت"
         return 0
     fi
+
+    local list_output list_rc=0 updates_before=-1
+    log_cmd "snap refresh --list"
+    list_output=$(snap refresh --list 2>&1) || list_rc=$?
+    echo "${list_output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
+    if (( list_rc == 0 )); then
+        updates_before=$(echo "${list_output}" | awk 'NR>1 && NF>0 {count++} END{print count+0}')
+    fi
+    if (( list_rc == 0 && updates_before == 0 )); then
+        msg_info "لا توجد تحديثات snap متاحة"
+        SNAP_STATUS="لا يوجد تحديثات"
+        record_outcome "skipped" "snap: لا توجد تحديثات"
+        return 0
+    fi
+
     msg_step "تحديث حزم snap"
     start_spinner "جارٍ تحديث snap..."
     local output rc=0
     log_cmd "snap refresh"
     output=$(snap refresh 2>&1) || rc=$?
     stop_spinner
-    echo "${output}" | head -50 >> "${LOG_FILE}" 2>/dev/null || true
+    echo "${output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
 
-    if (( rc == 0 )); then
-        if echo "${output}" | grep -qi "All snaps up to date"; then
-            msg_ok "جميع حزم snap محدّثة"
-            SNAP_STATUS="لا يوجد تحديثات"
-        else
-            msg_ok "تم تحديث حزم snap"
-            SNAP_STATUS="نجاح"
-        fi
-        (( COUNT_SUCCESS++ )) || true
-    else
-        if echo "${output}" | grep -qi "has running apps\|pending\|snap changes"; then
+    if (( rc != 0 )); then
+        if echo "${output}" | grep -qiE "has running apps|has running processes|pending|snap changes|change in progress"; then
             msg_warn "بعض حزم snap لا يمكن تحديثها الآن (قيد الاستخدام أو معلّقة)"
-            SNAP_STATUS="تحديث جزئي"
+            SNAP_STATUS="جزئي"
+            record_outcome "warning" "snap: تعذر تحديث بعض الحزم"
+            return 0
         else
             msg_fail "فشل تحديث snap (كود: ${rc})"
             SNAP_STATUS="فشل"
-            (( COUNT_FAILED++ )) || true
+            record_outcome "failed" "snap: فشل التحديث"
+            return "${rc}"
         fi
     fi
-    SUMMARY_LINES+=("${SYM_BULLET} snap: ${SNAP_STATUS}")
+
+    local remaining_output remaining_rc=0 remaining=0 updated=0
+    remaining_output=$(snap refresh --list 2>&1) || remaining_rc=$?
+    echo "${remaining_output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
+    if (( remaining_rc == 0 )); then
+        remaining=$(echo "${remaining_output}" | awk 'NR>1 && NF>0 {count++} END{print count+0}')
+    fi
+
+    if (( updates_before > -1 )); then
+        updated=$(( updates_before - remaining ))
+        if (( updated < 0 )); then
+            updated=0
+        fi
+    elif echo "${output}" | grep -qiE "all snaps up to date|no updates"; then
+        updated=0
+    else
+        updated=1
+    fi
+
+    if (( updated == 0 && remaining == 0 )); then
+        msg_info "snap كان محدّثًا مسبقًا"
+        SNAP_STATUS="لا يوجد تحديثات"
+        record_outcome "skipped" "snap: لا توجد تحديثات"
+    elif (( remaining > 0 )); then
+        msg_warn "تم تحديث ${updated} حزمة وبقي ${remaining} تحديث snap"
+        SNAP_STATUS="جزئي (${updated} محدثة)"
+        record_outcome "warning" "snap: تم تحديث ${updated} وبقي ${remaining}"
+    else
+        msg_ok "تم تحديث ${updated} حزمة snap"
+        SNAP_STATUS="نجاح (${updated} حزمة)"
+        record_outcome "success" "snap: تم تحديث ${updated} حزمة"
+    fi
     return 0
 }
 
@@ -627,26 +776,65 @@ do_flatpak_update() {
         msg_info "flatpak غير مثبّت — تم التخطي"
         FLATPAK_STATUS="غير مثبّت"
         log_skip "flatpak غير مثبّت"
-        SUMMARY_LINES+=("${SYM_INFO} flatpak: غير مثبّت — تم التخطي")
+        record_outcome "skipped" "flatpak: غير مثبّت"
         return 0
     fi
+
+    local pending_before=-1 pending_after=-1 updates_output
+    if updates_output=$(flatpak remote-ls --updates --columns=application 2>/dev/null); then
+        pending_before=$(echo "${updates_output}" | sed '/^[[:space:]]*$/d' | wc -l)
+    fi
+    if (( pending_before == 0 )); then
+        msg_info "لا توجد تحديثات flatpak متاحة"
+        FLATPAK_STATUS="لا يوجد تحديثات"
+        record_outcome "skipped" "flatpak: لا توجد تحديثات"
+        return 0
+    fi
+
     msg_step "تحديث حزم flatpak"
     start_spinner "جارٍ تحديث flatpak..."
-    local rc=0
+    local output rc=0 updated=0
     log_cmd "flatpak update -y --noninteractive"
-    flatpak update -y --noninteractive >> "${LOG_FILE}" 2>&1 || rc=$?
+    output=$(flatpak update -y --noninteractive 2>&1) || rc=$?
+    echo "${output}" | head -200 >> "${LOG_FILE}" 2>/dev/null || true
     stop_spinner
 
-    if (( rc == 0 )); then
-        msg_ok "تم تحديث flatpak"
-        FLATPAK_STATUS="نجاح"
-        (( COUNT_SUCCESS++ )) || true
-    else
+    if (( rc != 0 )); then
         msg_fail "فشل تحديث flatpak (كود: ${rc})"
         FLATPAK_STATUS="فشل"
-        (( COUNT_FAILED++ )) || true
+        record_outcome "failed" "flatpak: فشل التحديث"
+        return "${rc}"
     fi
-    SUMMARY_LINES+=("${SYM_BULLET} flatpak: ${FLATPAK_STATUS}")
+
+    if updates_output=$(flatpak remote-ls --updates --columns=application 2>/dev/null); then
+        pending_after=$(echo "${updates_output}" | sed '/^[[:space:]]*$/d' | wc -l)
+    fi
+    if (( pending_before > -1 && pending_after > -1 )); then
+        updated=$(( pending_before - pending_after ))
+        if (( updated < 0 )); then
+            updated=0
+        fi
+    fi
+
+    if echo "${output}" | grep -qi "Nothing to do"; then
+        msg_info "flatpak كان محدّثًا مسبقًا"
+        FLATPAK_STATUS="لا يوجد تحديثات"
+        record_outcome "skipped" "flatpak: لا توجد تحديثات"
+    elif (( pending_after > 0 )); then
+        msg_warn "تم تحديث ${updated} عنصر flatpak وبقي ${pending_after}"
+        FLATPAK_STATUS="جزئي (${updated} محدثة)"
+        record_outcome "warning" "flatpak: تم تحديث ${updated} وبقي ${pending_after}"
+    else
+        if (( updated > 0 )); then
+            msg_ok "تم تحديث ${updated} عنصر flatpak"
+            FLATPAK_STATUS="نجاح (${updated})"
+            record_outcome "success" "flatpak: تم تحديث ${updated} عنصر"
+        else
+            msg_ok "تم تحديث flatpak بنجاح"
+            FLATPAK_STATUS="نجاح"
+            record_outcome "success" "flatpak: تمت العملية بنجاح"
+        fi
+    fi
     return 0
 }
 
@@ -661,115 +849,98 @@ get_disk_free_mb() {
 
 do_cleanup() {
     msg_step "تنظيف الحزم والمخابئ"
-
-    # قياس المساحة قبل التنظيف
     local before_mb
     before_mb=$(get_disk_free_mb)
+    local cleanup_actions=0 cleanup_failures=0
+    local autoremove_candidates=0
 
-    local all_ok=true
-
-    # 1. إزالة الحزم غير المطلوبة
-    msg_info "إزالة الحزم غير المطلوبة (autoremove)..."
-    log_cmd "apt-get autoremove -y"
-    if apt-get autoremove -y >> "${LOG_FILE}" 2>&1; then
-        msg_ok "تم حذف الحزم غير المطلوبة"
+    autoremove_candidates=$(apt-get --simulate autoremove 2>/dev/null | grep -c "^Remv " || true)
+    if (( autoremove_candidates > 0 )); then
+        msg_info "إزالة الحزم غير المطلوبة (عدد ${autoremove_candidates})..."
+        log_cmd "apt-get autoremove --purge -y"
+        if DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y >> "${LOG_FILE}" 2>&1; then
+            msg_ok "تم حذف الحزم غير المطلوبة"
+            (( cleanup_actions++ )) || true
+        else
+            msg_warn "فشل حذف بعض الحزم غير المطلوبة"
+            (( cleanup_failures++ )) || true
+        fi
     else
-        msg_warn "فشل حذف بعض الحزم غير المطلوبة"
-        all_ok=false
+        msg_info "لا توجد حزم غير مطلوبة لإزالتها"
     fi
 
-    # 2. تنظيف ذاكرة التخزين المؤقت لـ apt
-    msg_info "تنظيف ذاكرة التخزين المؤقت (autoclean)..."
+    local apt_cache_before apt_cache_after
+    apt_cache_before=$(du -sm /var/cache/apt/archives 2>/dev/null | awk 'NR==1 {print $1+0}')
+    [[ -n "${apt_cache_before}" ]] || apt_cache_before=0
+    msg_info "تنظيف كاش apt..."
     log_cmd "apt-get autoclean"
     if apt-get autoclean >> "${LOG_FILE}" 2>&1; then
-        msg_ok "تم تنظيف ذاكرة التخزين المؤقت"
+        msg_ok "تم تنفيذ autoclean"
     else
-        msg_warn "فشل تنظيف ذاكرة التخزين المؤقت"
-        all_ok=false
+        msg_warn "فشل autoclean"
+        (( cleanup_failures++ )) || true
     fi
-
-    # 3. حذف ملفات .deb القديمة من الكاش
-    msg_info "حذف ملفات .deb القديمة من الكاش..."
     log_cmd "apt-get clean"
     if apt-get clean >> "${LOG_FILE}" 2>&1; then
-        msg_ok "تم حذف ملفات .deb المخزّنة"
+        msg_ok "تم تنفيذ clean"
     else
-        msg_warn "فشل حذف ملفات .deb"
-        all_ok=false
+        msg_warn "فشل clean"
+        (( cleanup_failures++ )) || true
+    fi
+    apt_cache_after=$(du -sm /var/cache/apt/archives 2>/dev/null | awk 'NR==1 {print $1+0}')
+    [[ -n "${apt_cache_after}" ]] || apt_cache_after=0
+    if (( apt_cache_after < apt_cache_before )); then
+        (( cleanup_actions++ )) || true
     fi
 
-    # 4. تنظيف النواة القديمة (الاحتفاظ بالحالية والسابقة فقط)
-    local current_kernel
-    current_kernel=$(uname -r)
-    local old_kernels
-    old_kernels=$(dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v "${current_kernel}" | grep -v 'linux-image-generic' || true)
-    if [[ -n "${old_kernels}" ]]; then
-        local kernel_count
-        kernel_count=$(echo "${old_kernels}" | wc -l)
-        if (( kernel_count > 1 )); then
-            # نحتفظ بآخر نواة قديمة كاحتياط
-            local kernels_to_remove
-            kernels_to_remove=$(echo "${old_kernels}" | head -n -1)
-            if [[ -n "${kernels_to_remove}" ]]; then
-                local remove_count
-                remove_count=$(echo "${kernels_to_remove}" | wc -l)
-                msg_info "إزالة ${remove_count} نواة قديمة (مع الاحتفاظ بنسخة احتياطية)..."
-                # shellcheck disable=SC2086
-                if DEBIAN_FRONTEND=noninteractive apt-get purge -y ${kernels_to_remove} >> "${LOG_FILE}" 2>&1; then
-                    msg_ok "تم إزالة النوى القديمة"
-                else
-                    msg_warn "فشل إزالة بعض النوى القديمة"
-                    all_ok=false
-                fi
-            fi
-        else
-            msg_info "لا توجد نوى قديمة زائدة للإزالة"
-        fi
-    else
-        msg_info "لا توجد نوى قديمة للإزالة"
-    fi
-
-    # 5. تنظيف سجلات systemd القديمة (الاحتفاظ بآخر 3 أيام)
     if command -v journalctl &>/dev/null; then
-        msg_info "تنظيف سجلات systemd القديمة..."
-        log_cmd "journalctl --vacuum-time=3d"
-        if journalctl --vacuum-time=3d >> "${LOG_FILE}" 2>&1; then
-            msg_ok "تم تنظيف السجلات القديمة"
-        else
-            msg_warn "فشل تنظيف السجلات"
-            all_ok=false
+        local journal_out journal_rc=0
+        msg_info "تنظيف السجلات القديمة..."
+        log_cmd "journalctl --vacuum-time=7d"
+        journal_out=$(journalctl --vacuum-time=7d 2>&1) || journal_rc=$?
+        echo "${journal_out}" | head -100 >> "${LOG_FILE}" 2>/dev/null || true
+        if (( journal_rc != 0 )); then
+            msg_warn "فشل تنظيف سجلات النظام"
+            (( cleanup_failures++ )) || true
+        elif echo "${journal_out}" | grep -qi "freed"; then
+            msg_ok "تم تنظيف سجلات النظام"
+            (( cleanup_actions++ )) || true
+        elif echo "${journal_out}" | grep -qi "No journal files were deleted"; then
+            msg_info "لا توجد سجلات قديمة تحتاج تنظيفًا"
+        elif [[ -n "${journal_out//[[:space:]]/}" ]]; then
+            msg_warn "تعذر تأكيد نتيجة تنظيف السجلات"
         fi
     fi
 
-    # 6. تنظيف المصغّرات (thumbnails) القديمة
-    local thumb_dir="${HOME}/.cache/thumbnails"
-    # عند تشغيل كـ root عبر sudo، HOME قد يكون /root
-    # نحاول المسار الأصلي للمستخدم
-    local real_user_home
+    local thumb_home thumb_dir thumb_before thumb_after
+    thumb_home="${HOME}"
     if [[ -n "${SUDO_USER:-}" ]]; then
-        real_user_home=$(getent passwd "${SUDO_USER}" | cut -d: -f6 2>/dev/null || echo "")
-        thumb_dir="${real_user_home}/.cache/thumbnails"
+        thumb_home=$(getent passwd "${SUDO_USER}" | cut -d: -f6 2>/dev/null)
+        [[ -n "${thumb_home}" ]] || thumb_home="${HOME}"
     fi
+    thumb_dir="${thumb_home}/.cache/thumbnails"
     if [[ -d "${thumb_dir}" ]]; then
-        local thumb_size
-        thumb_size=$(du -sm "${thumb_dir}" 2>/dev/null | awk '{print $1}' || echo "0")
-        if (( thumb_size > 10 )); then
-            msg_info "تنظيف المصغّرات القديمة (${thumb_size} MB)..."
-            find "${thumb_dir}" -type f -atime +30 -delete 2>/dev/null || true
+        thumb_before=$(du -sm "${thumb_dir}" 2>/dev/null | awk 'NR==1 {print $1+0}')
+        [[ -n "${thumb_before}" ]] || thumb_before=0
+        find "${thumb_dir}" -type f -atime +30 -delete 2>/dev/null || true
+        thumb_after=$(du -sm "${thumb_dir}" 2>/dev/null | awk 'NR==1 {print $1+0}')
+        [[ -n "${thumb_after}" ]] || thumb_after=0
+        if (( thumb_after < thumb_before )); then
             msg_ok "تم تنظيف المصغّرات القديمة"
+            (( cleanup_actions++ )) || true
         fi
     fi
 
-    # 7. تنظيف ملفات المؤقتة في /tmp القديمة (أكبر من 7 أيام)
-    local tmp_count
-    tmp_count=$(find /tmp -maxdepth 1 -type f -atime +7 2>/dev/null | wc -l || echo "0")
-    if (( tmp_count > 0 )); then
-        msg_info "تنظيف ${tmp_count} ملف مؤقت قديم من /tmp..."
-        find /tmp -maxdepth 1 -type f -atime +7 -delete 2>/dev/null || true
-        msg_ok "تم تنظيف الملفات المؤقتة"
+    if command -v systemd-tmpfiles &>/dev/null; then
+        log_cmd "systemd-tmpfiles --clean"
+        if systemd-tmpfiles --clean >> "${LOG_FILE}" 2>&1; then
+            msg_ok "تم تنظيف الملفات المؤقتة وفق سياسات النظام"
+        else
+            msg_warn "فشل تنظيف الملفات المؤقتة عبر systemd-tmpfiles"
+            (( cleanup_failures++ )) || true
+        fi
     fi
 
-    # حساب المساحة المستردة
     local after_mb
     after_mb=$(get_disk_free_mb)
     local saved_mb=$(( after_mb - before_mb ))
@@ -782,15 +953,19 @@ do_cleanup() {
         printf "  ${C_DIM}${SYM_INFO} لم يتم استرداد مساحة إضافية ملحوظة${C_RESET}\n"
     fi
 
-    if [[ "${all_ok}" == true ]]; then
-        msg_ok "اكتمل التنظيف بنجاح"
-        CLEANUP_STATUS="نجاح"
-        (( COUNT_SUCCESS++ )) || true
-    else
+    if (( cleanup_failures > 0 )); then
         msg_warn "اكتمل التنظيف مع بعض التحذيرات"
         CLEANUP_STATUS="جزئي"
+        record_outcome "warning" "التنظيف: اكتمل مع تحذيرات"
+    elif (( cleanup_actions == 0 && saved_mb <= 0 )); then
+        msg_info "لا توجد عناصر تحتاج تنظيفًا"
+        CLEANUP_STATUS="لا يوجد تغيير"
+        record_outcome "skipped" "التنظيف: لا يوجد ما يلزم تنظيفه"
+    else
+        msg_ok "اكتمل التنظيف بنجاح"
+        CLEANUP_STATUS="نجاح"
+        record_outcome "success" "التنظيف: مكتمل"
     fi
-    SUMMARY_LINES+=("${SYM_BULLET} التنظيف: ${CLEANUP_STATUS}")
     return 0
 }
 
@@ -819,10 +994,22 @@ print_summary() {
     echo ""
     print_header_box "الملخص النهائي"
     echo ""
+    local total_outcomes
+    total_outcomes="$(count_total_outcomes)"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "عمليات محسوبة:" "${C_CYAN}${total_outcomes}${C_RESET}"
     printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "عمليات ناجحة:" "${C_GREEN}${COUNT_SUCCESS}${C_RESET}"
     printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "تم تخطيها:" "${C_YELLOW}${COUNT_SKIPPED}${C_RESET}"
     printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "فشلت:" "${C_RED}${COUNT_FAILED}${C_RESET}"
-    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "تحذيرات:" "${C_YELLOW}${COUNT_WARNINGS}${C_RESET}"
+    printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "عمليات بتحذير:" "${C_YELLOW}${COUNT_WARNINGS}${C_RESET}"
+
+    if (( ${#SUMMARY_LINES[@]} > 0 )); then
+        echo ""
+        printf "  ${C_BOLD}${C_WHITE}تفاصيل العمليات:${C_RESET}\n"
+        for line in "${SUMMARY_LINES[@]}"; do
+            printf "    %s\n" "${line}"
+        done
+    fi
+
     print_line 50
     printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "حالة apt:" "${APT_STATUS}"
     printf "  ${C_BOLD}${C_WHITE}%-24s${C_RESET} %s\n" "حالة snap:" "${SNAP_STATUS}"
@@ -833,15 +1020,23 @@ print_summary() {
     if (( ${#ERROR_LINES[@]} > 0 )); then
         echo ""
         printf "  ${C_RED}${C_BOLD}الأخطاء:${C_RESET}\n"
+        local e
+        declare -A seen_errors=()
         for e in "${ERROR_LINES[@]}"; do
+            [[ -n "${seen_errors[${e}]:-}" ]] && continue
+            seen_errors["${e}"]=1
             printf "    ${C_RED}${SYM_FAIL} %s${C_RESET}\n" "${e}"
         done
     fi
 
     if (( ${#WARNING_LINES[@]} > 0 )); then
         echo ""
-        printf "  ${C_YELLOW}${C_BOLD}التحذيرات:${C_RESET}\n"
+        printf "  ${C_YELLOW}${C_BOLD}ملاحظات وتحذيرات:${C_RESET}\n"
+        local w
+        declare -A seen_warnings=()
         for w in "${WARNING_LINES[@]}"; do
+            [[ -n "${seen_warnings[${w}]:-}" ]] && continue
+            seen_warnings["${w}"]=1
             printf "    ${C_YELLOW}${SYM_WARN} %s${C_RESET}\n" "${w}"
         done
     fi
@@ -869,6 +1064,8 @@ reset_counters() {
 mode_safe() {
     if ! run_preflight; then
         msg_fail "فشلت فحوصات ما قبل التشغيل — لا يمكن المتابعة"
+        record_outcome "failed" "فحوصات ما قبل التشغيل: فشل"
+        print_summary
         return 1
     fi
     print_header_box "${SYM_SHIELD} الصيانة الآمنة"
@@ -879,6 +1076,9 @@ mode_safe() {
     do_cleanup          || true
     check_reboot_needed
     print_summary
+    if (( COUNT_FAILED > 0 )); then
+        return 1
+    fi
     return 0
 }
 
@@ -943,7 +1143,8 @@ mode_preview() {
     echo ""
     msg_step "حجم ذاكرة التخزين المؤقت"
     local cache_size
-    cache_size=$(du -sm /var/cache/apt/archives/ 2>/dev/null | awk '{print $1}' || echo "0")
+    cache_size=$(du -sm /var/cache/apt/archives/ 2>/dev/null | awk 'NR==1 {print $1}')
+    [[ -n "${cache_size}" ]] || cache_size="0"
     msg_info "حجم كاش apt: ${cache_size} MB"
 
     # نوى قديمة
@@ -963,7 +1164,8 @@ mode_preview() {
     # حجم سجلات systemd
     if command -v journalctl &>/dev/null; then
         local journal_size
-        journal_size=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*\s*[KMGT]' | head -1 || echo "غير معروف")
+        journal_size=$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?[[:space:]]*[KMGT]' | head -1)
+        [[ -n "${journal_size}" ]] || journal_size="غير معروف"
         msg_info "حجم سجلات systemd: ${journal_size}"
     fi
 
@@ -991,7 +1193,8 @@ mode_preview() {
     if command -v flatpak &>/dev/null; then
         msg_info "flatpak لا يوفر وضع معاينة كامل — سيُعرض عدد التطبيقات المثبّتة فقط"
         local fp_count
-        fp_count=$(flatpak list --app 2>/dev/null | wc -l || echo 0)
+        fp_count=$(flatpak list --app 2>/dev/null | wc -l)
+        [[ -n "${fp_count}" ]] || fp_count=0
         msg_info "عدد تطبيقات flatpak المثبّتة: ${fp_count}"
     else
         msg_info "flatpak غير مثبّت"
@@ -1019,22 +1222,35 @@ mode_advanced() {
     print_line 50
     echo ""
 
-    printf "  ${C_BOLD}هل تريد المتابعة؟ (نعم/لا): ${C_RESET}"
-    local confirm
-    read -r confirm
+    local confirm="لا"
+    if [[ "${AUTO_CONFIRM}" == true ]]; then
+        confirm="نعم"
+        msg_info "تم تفعيل التأكيد المسبق للوضع المتقدم (--yes)"
+    elif [[ -t 0 ]]; then
+        printf "  ${C_BOLD}هل تريد المتابعة؟ (نعم/لا): ${C_RESET}"
+        read -r confirm
+    else
+        msg_fail "الوضع المتقدم يحتاج تأكيدًا تفاعليًا أو الخيار --yes"
+        record_outcome "failed" "dist-upgrade: لم يتم التأكيد"
+        print_summary
+        return 1
+    fi
+
     case "${confirm}" in
-        نعم|y|Y|yes|YES)
-            log_info "المستخدم وافق على الوضع المتقدم"
-            ;;
+        نعم|y|Y|yes|YES) log_info "المستخدم وافق على الوضع المتقدم" ;;
         *)
             msg_info "تم إلغاء الوضع المتقدم"
             log_info "المستخدم ألغى الوضع المتقدم"
+            record_outcome "skipped" "dist-upgrade: تم الإلغاء بواسطة المستخدم"
+            print_summary
             return 0
             ;;
     esac
 
     if ! run_preflight; then
         msg_fail "فشلت فحوصات ما قبل التشغيل — لا يمكن المتابعة"
+        record_outcome "failed" "فحوصات ما قبل التشغيل: فشل"
+        print_summary
         return 1
     fi
     print_header_box "${SYM_ROCKET} الصيانة المتقدمة"
@@ -1045,6 +1261,9 @@ mode_advanced() {
     do_cleanup              || true
     check_reboot_needed
     print_summary
+    if (( COUNT_FAILED > 0 )); then
+        return 1
+    fi
     return 0
 }
 
@@ -1052,12 +1271,17 @@ mode_advanced() {
 mode_cleanup_only() {
     if ! run_preflight --skip-connectivity; then
         msg_fail "فشلت فحوصات ما قبل التشغيل — لا يمكن المتابعة"
+        record_outcome "failed" "فحوصات ما قبل التشغيل: فشل"
+        print_summary
         return 1
     fi
     print_header_box "${SYM_BROOM} التنظيف فقط"
     do_cleanup || true
     check_reboot_needed
     print_summary
+    if (( COUNT_FAILED > 0 )); then
+        return 1
+    fi
     return 0
 }
 
@@ -1090,7 +1314,8 @@ mode_system_status() {
         local apt_ver
         apt_ver=$(apt-get --version 2>/dev/null | head -1 | awk '{print $2}')
         local upgradable
-        upgradable=$(apt list --upgradable 2>/dev/null | grep -c "upgradable" || echo 0)
+        upgradable=$(apt list --upgradable 2>/dev/null | grep -c "upgradable")
+        [[ -n "${upgradable}" ]] || upgradable=0
         printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %-20s %s (${upgradable} حزمة قابلة للترقية)\n" "apt:" "${apt_ver}"
     else
         printf "  ${C_RED}${SYM_FAIL}${C_RESET}  %-20s %s\n" "apt:" "غير موجود!"
@@ -1101,7 +1326,8 @@ mode_system_status() {
         local snap_ver
         snap_ver=$(snap version 2>/dev/null | head -1 | awk '{print $2}')
         local snap_count
-        snap_count=$(snap list 2>/dev/null | tail -n+2 | wc -l || echo 0)
+        snap_count=$(snap list 2>/dev/null | tail -n+2 | wc -l)
+        [[ -n "${snap_count}" ]] || snap_count=0
         printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %-20s %s (${snap_count} حزمة مثبّتة)\n" "snap:" "${snap_ver}"
     else
         printf "  ${C_GRAY}${SYM_INFO}${C_RESET}  %-20s %s\n" "snap:" "غير مثبّت"
@@ -1112,7 +1338,8 @@ mode_system_status() {
         local fp_ver
         fp_ver=$(flatpak --version 2>/dev/null | awk '{print $2}')
         local fp_count
-        fp_count=$(flatpak list --app 2>/dev/null | wc -l || echo 0)
+        fp_count=$(flatpak list --app 2>/dev/null | wc -l)
+        [[ -n "${fp_count}" ]] || fp_count=0
         printf "  ${C_GREEN}${SYM_OK}${C_RESET}  %-20s %s (${fp_count} تطبيق)\n" "flatpak:" "${fp_ver}"
     else
         printf "  ${C_GRAY}${SYM_INFO}${C_RESET}  %-20s %s\n" "flatpak:" "غير مثبّت"
@@ -1151,11 +1378,13 @@ mode_system_status() {
     print_line 50
     printf "  ${C_BOLD}${C_CYAN}أحجام التخزين المؤقت:${C_RESET}\n"
     local apt_cache_size
-    apt_cache_size=$(du -sh /var/cache/apt/archives/ 2>/dev/null | awk '{print $1}' || echo "0")
+    apt_cache_size=$(du -sh /var/cache/apt/archives/ 2>/dev/null | awk 'NR==1 {print $1}')
+    [[ -n "${apt_cache_size}" ]] || apt_cache_size="0"
     printf "  %-20s %s\n" "كاش apt:" "${apt_cache_size}"
     if command -v journalctl &>/dev/null; then
         local journal_usage
-        journal_usage=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*\s*[KMGT]' | head -1 || echo "غير معروف")
+        journal_usage=$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?[[:space:]]*[KMGT]' | head -1)
+        [[ -n "${journal_usage}" ]] || journal_usage="غير معروف"
         printf "  %-20s %s\n" "سجلات systemd:" "${journal_usage}"
     fi
 
@@ -1214,7 +1443,7 @@ print_banner() {
 
      ┌──────────────────────────────────────────────────────────┐
      │          أداة صيانة وتحديث أوبنتو سطح المكتب           │
-     │            ubuntu-maintain                               │
+     │                    sahel                                  │
      └──────────────────────────────────────────────────────────┘
 BANNER
     printf "${C_RESET}"
@@ -1287,6 +1516,7 @@ ${SCRIPT_AUTHOR} — ${SCRIPT_URL}
   --safe          الصيانة الآمنة (الوضع الافتراضي)
   --preview       معاينة بدون تنفيذ (Dry Run)
   --advanced      صيانة متقدمة (dist-upgrade)
+  --yes           تأكيد تلقائي (يُستخدم مع --advanced)
   --cleanup       تنظيف فقط
   --status        عرض حالة النظام
   --about         حول الأداة
@@ -1296,6 +1526,7 @@ ${SCRIPT_AUTHOR} — ${SCRIPT_URL}
 أمثلة:
   sudo ${SCRIPT_NAME} --safe
   sudo ${SCRIPT_NAME} --preview
+  sudo ${SCRIPT_NAME} --advanced --yes
   sudo ${SCRIPT_NAME}              # القائمة التفاعلية
 EOF
 }
@@ -1306,10 +1537,31 @@ EOF
 main() {
     setup_colors
     setup_symbols
-    init_logging
+    local mode_arg=""
+    local arg
 
-    # --help و --about لا تحتاج root
-    case "${1:-}" in
+    for arg in "$@"; do
+        case "${arg}" in
+            --yes)
+                AUTO_CONFIRM=true
+                ;;
+            --safe|--preview|--advanced|--cleanup|--status|--about|--help|-h)
+                if [[ -n "${mode_arg}" && "${mode_arg}" != "${arg}" ]]; then
+                    printf "تم تمرير أكثر من وضع تنفيذ في نفس الوقت.\n" >&2
+                    usage >&2
+                    exit 1
+                fi
+                mode_arg="${arg}"
+                ;;
+            *)
+                printf "خيار غير معروف: %s\n" "${arg}" >&2
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    case "${mode_arg}" in
         --help|-h)
             usage
             exit 0
@@ -1324,15 +1576,22 @@ main() {
             ;;
     esac
 
-    # التحقق من صلاحيات root لبقية الأوضاع
-    ensure_root "$@"
+    if [[ "${AUTO_CONFIRM}" == true && "${mode_arg}" != "--advanced" ]]; then
+        AUTO_CONFIRM=false
+    fi
 
-    # إعادة تهيئة الألوان والتسجيل بعد sudo (قد يتغير TERM)
+    if [[ -z "${mode_arg}" && $# -gt 0 ]]; then
+        printf "الخيار --yes يتطلب --advanced.\n" >&2
+        usage >&2
+        exit 1
+    fi
+
+    ensure_root "$@"
     setup_colors
     setup_symbols
     init_logging
 
-    case "${1:-}" in
+    case "${mode_arg}" in
         --safe)
             mode_safe
             ;;
@@ -1346,19 +1605,12 @@ main() {
             mode_cleanup_only
             ;;
         "")
-            # الوضع التفاعلي
             if [[ -t 0 ]]; then
                 interactive_loop
             else
-                # stdin ليس طرفية — تشغيل الوضع الآمن تلقائيًا
                 log_info "تشغيل غير تفاعلي — الوضع الآمن الافتراضي"
                 mode_safe
             fi
-            ;;
-        *)
-            printf "خيار غير معروف: %s\n" "$1" >&2
-            usage >&2
-            exit 1
             ;;
     esac
 }

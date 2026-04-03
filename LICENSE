@@ -1,14 +1,21 @@
-تنبيه مهم بخصوص الترخيص
+MIT License
 
-هذا المشروع مملوك لصاحبه، وجميع الحقوق فيه محفوظة ما لم يُذكر ترخيص رسمي آخر بشكل صريح داخل هذا المستودع.
+Copyright (c) 2026 Fahad Alsharari — https://fahadalsharari.sa
 
-يسمح بالاطلاع على الكود ومراجعته داخل المستودع، لكن لا يسمح بإعادة النشر أو إعادة التوزيع أو التعديل أو البيع أو استخدام أجزاء جوهرية من المشروع في مشاريع أخرى دون إذن كتابي مسبق من صاحب المشروع.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-هذا النص يُعد إشعار حقوق مبدئي إلى حين اعتماد ترخيص نهائي ورسمي إذا قرر صاحب المشروع نشره بترخيص مفتوح المصدر لاحقًا.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-حقوق المشروع:
-فهد الشراري
-FahadAlsharari
-FahadAlsharari.sa
-
-جميع الحقوق محفوظة.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
